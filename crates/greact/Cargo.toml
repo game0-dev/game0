@@ -1,0 +1,31 @@
+[package]
+name = "greact"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitflags.workspace = true
+slotmap.workspace = true
+smallvec = { workspace = true }
+greact-macros = { path = "../greact-macros" }
+taffy.workspace = true
+cosmic-text.workspace = true
+etagere.workspace = true
+winit.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
+arboard = "3.4.1"
+tokio.workspace = true
+
+[[example]]
+name = "hello"
+path = "examples/hello.rs"
+
+[[example]]
+name = "input_basic"
+path = "examples/input_basic.rs"
+
+[[example]]
+name = "input_ime"
+path = "examples/input_ime.rs"

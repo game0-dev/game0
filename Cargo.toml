@@ -1,0 +1,32 @@
+[workspace]
+members = [
+  "crates/*"
+]
+default-members = ["crates/greact"]
+resolver = "2"
+
+[workspace.dependencies]
+# workspace
+utils = { path = "crates/utils" }
+
+# external 
+anyhow = "1.0.100"
+bevy_ecs = "0.16.1"
+bitflags = "2"
+slotmap = "1"
+bytemuck = { version = "1.23.2", default-features = false, features = ["derive"] }
+crossbeam = { version = "0.8.4", default-features = false, features = ["crossbeam-channel"] }
+fxhash = "0.2.1"
+glam = "0.30.5"
+log = { version = "0.4.27", default-features = false, features = ["max_level_trace", "release_max_level_info"] }
+parking_lot = "0.12.4"
+rand = "0.9.2"
+smallvec = { version = "1.15.1", default-features = false, features = ["union"] }
+smol = "2.0.2"
+tokio = { version = "1.47.1", features = ["full"] }
+wgpu = "26.0.1"
+winit = "0.30.12"
+taffy = { version = "0.9", default-features = false, features = ["flexbox", "std", "taffy_tree"] }
+cosmic-text = "0.12"
+etagere = "0.2"
+pollster = "0.4"
