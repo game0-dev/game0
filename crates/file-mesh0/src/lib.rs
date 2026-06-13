@@ -1,18 +1,7 @@
-pub mod decode;
-pub mod encode;
-pub mod format;
-pub mod owned;
-pub mod section;
-pub mod section_kind;
+pub mod mesh0_owned;
+pub mod mesh0_view;
 pub mod sections;
-pub mod validate;
-pub mod view;
 
-pub use format::*;
-pub use owned::*;
-pub use section::*;
+pub use mesh0_owned::*;
+pub use mesh0_view::*;
 pub use sections::*;
-pub use view::*;
-
-#[cfg(test)]
-mod tests;
