@@ -31,7 +31,8 @@ Mesh0 file
 `Mesh0View<R>` stores the ordered section table. Each `SectionTableItem<R>`
 stores its table metadata, an offset reader for its body, and a cached typed
 `SectionView<R>`. Call `item.read_section_view()` to create or reuse the typed
-view, then call `read_owned()` on that view when owned data is needed.
+view. Non-LOD sections are decoded immediately into their section structs; LOD
+keeps vertex and index bytes lazy.
 
 The section table is an ordered list. The container layer does not require any
 specific section type and does not enforce uniqueness; every section is read as
@@ -65,37 +66,36 @@ SOURCE_DEBUG
 └─ opaque bytes
 ```
 
-LOD sections are self-contained. The LOD header contains spans that point to
-tables and blobs relative to the start of the LOD section body.
+LOD sections are self-contained. The layout is fixed: header, metadata arrays,
+8-byte padding, vertex bytes, then index bytes. The header stores array counts
+and blob sizes; offsets are derived from the fixed layout.
 
 ```text
 LOD section body
-├─ Mesh0LodHeader                      136 bytes
+├─ Mesh0LodHeader                      104 bytes
 │  ├─ lod_level: u32
 │  ├─ primitive/index/vertex metadata
 │  ├─ bounds
-│  ├─ submeshes: TableSpan
-│  ├─ draw_batches: TableSpan
-│  ├─ joint_palette: TableSpan
-│  ├─ vertex_buffer: BlobSpan
-│  └─ index_buffer: BlobSpan
+│  ├─ submesh_count: u32
+│  ├─ draw_batch_count: u32
+│  ├─ joint_palette_count: u32
+│  ├─ vertex_buffer_size: u32
+│  └─ index_buffer_size: u32
 │
-├─ padding / table data
-│  ├─ Mesh0Submesh[]                   76 bytes each
-│  ├─ Mesh0DrawBatch[]                 64 bytes each
-│  └─ Mesh0JointPaletteEntry[]         16 bytes each
-│
-└─ blob data
-   ├─ vertex bytes
-   └─ index bytes
+├─ Mesh0Submesh[]                      76 bytes each
+├─ Mesh0DrawBatch[]                    64 bytes each
+├─ Mesh0JointPaletteEntry[]            16 bytes each
+├─ padding                             zero bytes, aligned to 8
+├─ vertex bytes
+└─ index bytes
 ```
 
 ## Ownership Model
 
 `Mesh0View<R>` reads only the file header and section table when opened.
-`SectionTableItem<R>` does not expose raw byte reads. `SectionView<R>` is lazy:
-creating a typed view does not read the section body. Decoding happens when the
-caller asks for owned data, and LOD blobs remain lazy through `BlobView<R>`.
+`SectionTableItem<R>` does not expose raw byte reads. Reading a typed view
+decodes non-LOD sections immediately. LOD section views read header and metadata
+arrays up front, while vertex and index bytes remain lazy.
 
 `Mesh0Owned` is the decoded in-memory form used for writing the whole file back
 out. It preserves section order and allows repeated section types.

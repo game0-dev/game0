@@ -91,17 +91,12 @@ where
             view: OnceCell::new(),
         })
     }
-}
 
-pub(crate) fn write_section_table_item(
-    out: &mut EncodeBuffer,
-    section_type: u32,
-    offset: u32,
-    len: u32,
-) {
-    out.write_u32_le(section_type);
-    out.write_u32_le(offset);
-    out.write_u32_le(len);
+    pub(crate) fn write(out: &mut EncodeBuffer, section_type: u32, offset: u32, len: u32) {
+        out.write_u32_le(section_type);
+        out.write_u32_le(offset);
+        out.write_u32_le(len);
+    }
 }
 
 #[derive(Clone)]

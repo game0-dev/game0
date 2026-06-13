@@ -100,17 +100,17 @@ fn mesh0_open_does_not_read_lod_body() {
 
 #[test]
 fn ref_section_u64_roundtrip() {
-    let refs = EffectRefsSectionOwned {
+    let refs = EffectRefsSection {
         refs: vec![10, 20, 30],
     };
-    let bytes = encode_effect_refs_section(&refs).unwrap();
+    let bytes = refs.write().unwrap();
     assert_eq!(bytes.len(), 24);
-    let decoded = decode_effect_refs_section(bytes).unwrap();
+    let decoded = EffectRefsSection::read(bytes).unwrap();
     assert_eq!(decoded.refs, refs.refs);
 }
 
 #[test]
-fn mesh0_lod_view_is_lazy_until_header_read() {
+fn mesh0_lod_view_reads_metadata_without_blobs() {
     pollster::block_on(async {
         let reader = RecordingReader::new(sample_mesh().write().unwrap());
         let view = Mesh0View::open(reader.clone()).await.unwrap();
@@ -118,14 +118,18 @@ fn mesh0_lod_view_is_lazy_until_header_read() {
 
         let before = reader.reads().len();
         let lod = item.read_section_view().await.unwrap();
-        assert_eq!(reader.reads().len(), before);
         let SectionView::Lod(lod) = lod else {
             panic!("expected LOD section");
         };
-        let _ = lod.header().await.unwrap();
+        assert_eq!(lod.header.vertex_count, 3);
         let reads = reader.reads();
-        assert_eq!(reads.len(), before + 1);
-        assert_eq!(reads.last().unwrap().1, Mesh0LodHeader::BYTE_SIZE as u64);
+        assert_eq!(reads.len(), before + 2);
+        assert_eq!(reads[before].1, Mesh0LodHeader::BYTE_SIZE as u64);
+        assert_eq!(
+            reads[before + 1].1,
+            (Mesh0LodHeader::BYTE_SIZE + Mesh0Submesh::BYTE_SIZE + Mesh0DrawBatch::BYTE_SIZE)
+                as u64
+        );
     });
 }
 
@@ -141,7 +145,7 @@ fn section_table_item_caches_section_view() {
         let after_first = reader.reads().len();
         let _ = item.read_section_view().await.unwrap();
 
-        assert_eq!(after_first, before);
+        assert!(after_first > before);
         assert_eq!(reader.reads().len(), after_first);
     });
 }
@@ -160,7 +164,7 @@ fn mesh0_lod_vertex_bytes_are_lazy() {
         let vertices = lod.vertex_bytes().await.unwrap();
         assert_eq!(vertices.len(), 96);
         let reads = reader.reads();
-        assert_eq!(reads.len(), before + 2);
+        assert_eq!(reads.len(), before + 1);
         assert_eq!(reads.last().unwrap().1, 96);
     });
 }
@@ -216,7 +220,7 @@ fn sample_mesh() -> Mesh0Owned {
         source_format: 1,
         source_version: 0,
     };
-    let materials = MaterialSlotsSectionOwned {
+    let materials = MaterialSlotsSection {
         slots: vec![Mesh0MaterialSlot {
             slot_index: 0,
             flags: 0,
@@ -248,23 +252,11 @@ fn sample_mesh() -> Mesh0Owned {
             bounds_max: [1.0; 3],
             bounding_sphere_center: [0.5; 3],
             bounding_sphere_radius: 1.0,
-            submeshes: TableSpan {
-                offset: 0,
-                count: 0,
-                stride: 0,
-            },
-            draw_batches: TableSpan {
-                offset: 0,
-                count: 0,
-                stride: 0,
-            },
-            joint_palette: TableSpan {
-                offset: 0,
-                count: 0,
-                stride: 0,
-            },
-            vertex_buffer: BlobSpan { offset: 0, size: 0 },
-            index_buffer: BlobSpan { offset: 0, size: 0 },
+            submesh_count: 0,
+            draw_batch_count: 0,
+            joint_palette_count: 0,
+            vertex_buffer_size: 0,
+            index_buffer_size: 0,
         },
         submeshes: vec![Mesh0Submesh {
             submesh_id: 0,

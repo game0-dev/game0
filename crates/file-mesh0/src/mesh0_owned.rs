@@ -1,9 +1,9 @@
 use bytes::Bytes;
-use file_core::{align::align_up, AssetError, AssetResult, EncodeBuffer};
+use file_core::{align::align_up, AssetError, AssetResult, EncodeBuffer, MemoryAssetReader};
 
 use crate::{
-    mesh0_view::{write_section_table_item, Mesh0Header, SECTION_TABLE_ITEM_BYTE_SIZE},
-    sections::{validate_lod_section, SectionOwned},
+    mesh0_view::{Mesh0Header, SectionTableItem, SECTION_TABLE_ITEM_BYTE_SIZE},
+    sections::SectionOwned,
 };
 
 pub struct Mesh0Owned {
@@ -36,7 +36,7 @@ impl Mesh0Owned {
                 .checked_add(bytes.len())
                 .ok_or(file_core::AssetError::OffsetOverflow)?;
 
-            write_section_table_item(
+            SectionTableItem::<MemoryAssetReader>::write(
                 &mut out,
                 section_type,
                 u32::try_from(offset)?,
@@ -75,7 +75,7 @@ fn validate_mesh0_owned(mesh: &Mesh0Owned) -> AssetResult<()> {
 
     for section in mesh.get_sections_by_type(crate::sections::section_type::LOD) {
         if let SectionOwned::Lod(lod) = section {
-            validate_lod_section(lod, material_count)?;
+            lod.validate(material_count)?;
         }
     }
     Ok(())

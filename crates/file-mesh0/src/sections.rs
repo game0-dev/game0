@@ -47,15 +47,15 @@ where
     R: AssetRead + Clone + Send + Sync,
 {
     MeshInfo(MeshInfoSection),
-    MaterialSlots(MaterialSlotsSectionView<R>),
-    Skinning(SkinningSectionView<R>),
-    SkeletonRefs(SkeletonRefsSectionView<R>),
-    AnimationRefs(AnimationRefsSectionView<R>),
-    EffectRefs(EffectRefsSectionView<R>),
-    CollisionRefs(CollisionRefsSectionView<R>),
-    AttachmentRefs(AttachmentRefsSectionView<R>),
-    SourceFeatures(SourceFeaturesSectionView<R>),
-    SourceDebug(SourceDebugSectionView<R>),
+    MaterialSlots(MaterialSlotsSection),
+    Skinning(SkinningSection),
+    SkeletonRefs(SkeletonRefsSection),
+    AnimationRefs(AnimationRefsSection),
+    EffectRefs(EffectRefsSection),
+    CollisionRefs(CollisionRefsSection),
+    AttachmentRefs(AttachmentRefsSection),
+    SourceFeatures(SourceFeaturesSection),
+    SourceDebug(SourceDebugSection),
     Lod(LodSectionView<R>),
 }
 
@@ -72,30 +72,34 @@ where
             section_type::MESH_INFO => Self::MeshInfo(MeshInfoSection::read(
                 reader.read_at(0, u64::from(len)).await?,
             )?),
-            section_type::MATERIAL_SLOTS => {
-                Self::MaterialSlots(MaterialSlotsSectionView::new(reader, len))
-            }
-            section_type::SKINNING => Self::Skinning(SkinningSectionView::new(reader, len)),
-            section_type::SKELETON_REFS => {
-                Self::SkeletonRefs(SkeletonRefsSectionView::new(reader, len))
-            }
-            section_type::ANIMATION_REFS => {
-                Self::AnimationRefs(AnimationRefsSectionView::new(reader, len))
-            }
-            section_type::EFFECT_REFS => Self::EffectRefs(EffectRefsSectionView::new(reader, len)),
-            section_type::COLLISION_REFS => {
-                Self::CollisionRefs(CollisionRefsSectionView::new(reader, len))
-            }
-            section_type::ATTACHMENT_REFS => {
-                Self::AttachmentRefs(AttachmentRefsSectionView::new(reader, len))
-            }
-            section_type::SOURCE_FEATURES => {
-                Self::SourceFeatures(SourceFeaturesSectionView::new(reader, len))
-            }
-            section_type::SOURCE_DEBUG => {
-                Self::SourceDebug(SourceDebugSectionView::new(reader, len))
-            }
-            section_type::LOD => Self::Lod(LodSectionView::new(reader, len)),
+            section_type::LOD => Self::Lod(LodSectionView::read(reader, len).await?),
+            section_type::MATERIAL_SLOTS => Self::MaterialSlots(MaterialSlotsSection::read(
+                reader.read_at(0, u64::from(len)).await?,
+            )?),
+            section_type::SKINNING => Self::Skinning(SkinningSection::read(
+                reader.read_at(0, u64::from(len)).await?,
+            )?),
+            section_type::SKELETON_REFS => Self::SkeletonRefs(SkeletonRefsSection::read(
+                reader.read_at(0, u64::from(len)).await?,
+            )?),
+            section_type::ANIMATION_REFS => Self::AnimationRefs(AnimationRefsSection::read(
+                reader.read_at(0, u64::from(len)).await?,
+            )?),
+            section_type::EFFECT_REFS => Self::EffectRefs(EffectRefsSection::read(
+                reader.read_at(0, u64::from(len)).await?,
+            )?),
+            section_type::COLLISION_REFS => Self::CollisionRefs(CollisionRefsSection::read(
+                reader.read_at(0, u64::from(len)).await?,
+            )?),
+            section_type::ATTACHMENT_REFS => Self::AttachmentRefs(AttachmentRefsSection::read(
+                reader.read_at(0, u64::from(len)).await?,
+            )?),
+            section_type::SOURCE_FEATURES => Self::SourceFeatures(SourceFeaturesSection::read(
+                reader.read_at(0, u64::from(len)).await?,
+            )?),
+            section_type::SOURCE_DEBUG => Self::SourceDebug(SourceDebugSection::read(
+                reader.read_at(0, u64::from(len)).await?,
+            )?),
             _ => return Err(AssetError::InvalidSectionType(section_type)),
         })
     }
@@ -119,25 +123,15 @@ where
     pub async fn read_owned(&self) -> AssetResult<SectionOwned> {
         Ok(match self {
             Self::MeshInfo(section) => SectionOwned::MeshInfo(section.clone()),
-            Self::MaterialSlots(section) => {
-                SectionOwned::MaterialSlots(section.read_owned().await?)
-            }
-            Self::Skinning(section) => SectionOwned::Skinning(section.read_owned().await?),
-            Self::SkeletonRefs(section) => SectionOwned::SkeletonRefs(section.read_owned().await?),
-            Self::AnimationRefs(section) => {
-                SectionOwned::AnimationRefs(section.read_owned().await?)
-            }
-            Self::EffectRefs(section) => SectionOwned::EffectRefs(section.read_owned().await?),
-            Self::CollisionRefs(section) => {
-                SectionOwned::CollisionRefs(section.read_owned().await?)
-            }
-            Self::AttachmentRefs(section) => {
-                SectionOwned::AttachmentRefs(section.read_owned().await?)
-            }
-            Self::SourceFeatures(section) => {
-                SectionOwned::SourceFeatures(section.read_owned().await?)
-            }
-            Self::SourceDebug(section) => SectionOwned::SourceDebug(section.read_owned().await?),
+            Self::MaterialSlots(section) => SectionOwned::MaterialSlots(section.clone()),
+            Self::Skinning(section) => SectionOwned::Skinning(section.clone()),
+            Self::SkeletonRefs(section) => SectionOwned::SkeletonRefs(section.clone()),
+            Self::AnimationRefs(section) => SectionOwned::AnimationRefs(section.clone()),
+            Self::EffectRefs(section) => SectionOwned::EffectRefs(section.clone()),
+            Self::CollisionRefs(section) => SectionOwned::CollisionRefs(section.clone()),
+            Self::AttachmentRefs(section) => SectionOwned::AttachmentRefs(section.clone()),
+            Self::SourceFeatures(section) => SectionOwned::SourceFeatures(section.clone()),
+            Self::SourceDebug(section) => SectionOwned::SourceDebug(section.clone()),
             Self::Lod(section) => SectionOwned::Lod(Box::new(section.read_owned().await?)),
         })
     }
@@ -145,15 +139,15 @@ where
 
 pub enum SectionOwned {
     MeshInfo(MeshInfoSection),
-    MaterialSlots(MaterialSlotsSectionOwned),
-    Skinning(SkinningSectionOwned),
-    SkeletonRefs(SkeletonRefsSectionOwned),
-    AnimationRefs(AnimationRefsSectionOwned),
-    EffectRefs(EffectRefsSectionOwned),
-    CollisionRefs(CollisionRefsSectionOwned),
-    AttachmentRefs(AttachmentRefsSectionOwned),
-    SourceFeatures(SourceFeaturesSectionOwned),
-    SourceDebug(SourceDebugSectionOwned),
+    MaterialSlots(MaterialSlotsSection),
+    Skinning(SkinningSection),
+    SkeletonRefs(SkeletonRefsSection),
+    AnimationRefs(AnimationRefsSection),
+    EffectRefs(EffectRefsSection),
+    CollisionRefs(CollisionRefsSection),
+    AttachmentRefs(AttachmentRefsSection),
+    SourceFeatures(SourceFeaturesSection),
+    SourceDebug(SourceDebugSection),
     Lod(Box<LodSectionOwned>),
 }
 
