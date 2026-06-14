@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use file_core::{decode_table, AssetResult, DecodeCursor, EncodeBuffer};
+use file_core::{AssetError, AssetResult, DecodeCursor, EncodeBuffer};
 
 pub mod render_queue {
     pub const OPAQUE: u32 = 1;
@@ -32,9 +32,15 @@ pub struct MaterialSlotsSection {
 
 impl MaterialSlotsSection {
     pub fn read(bytes: Bytes) -> AssetResult<Self> {
-        Ok(Self {
-            slots: decode_table(&bytes, Mesh0MaterialSlot::BYTE_SIZE, decode_material_slot)?,
-        })
+        if bytes.len() % Mesh0MaterialSlot::BYTE_SIZE != 0 {
+            return Err(AssetError::InvalidData("invalid material slot table size"));
+        }
+        let mut cursor = DecodeCursor::new(&bytes);
+        let mut slots = Vec::with_capacity(bytes.len() / Mesh0MaterialSlot::BYTE_SIZE);
+        while cursor.remaining() > 0 {
+            slots.push(Mesh0MaterialSlot::read(&mut cursor)?);
+        }
+        Ok(Self { slots })
     }
 
     pub fn write(&self) -> AssetResult<Bytes> {
@@ -54,16 +60,18 @@ impl MaterialSlotsSection {
     }
 }
 
-fn decode_material_slot(cursor: &mut DecodeCursor<'_>) -> AssetResult<Mesh0MaterialSlot> {
-    Ok(Mesh0MaterialSlot {
-        slot_index: cursor.read_u32_le()?,
-        flags: cursor.read_u32_le()?,
-        material_asset: cursor.read_u64_le()?,
-        render_queue: cursor.read_u32_le()?,
-        shader_hint: cursor.read_u32_le()?,
-        source_material_index: cursor.read_u32_le()?,
-        source_texture_combo_index: cursor.read_u32_le()?,
-        source_texture_count: cursor.read_u32_le()?,
-        name_hash: cursor.read_u64_le()?,
-    })
+impl Mesh0MaterialSlot {
+    fn read(cursor: &mut DecodeCursor<'_>) -> AssetResult<Self> {
+        Ok(Self {
+            slot_index: cursor.read_u32_le()?,
+            flags: cursor.read_u32_le()?,
+            material_asset: cursor.read_u64_le()?,
+            render_queue: cursor.read_u32_le()?,
+            shader_hint: cursor.read_u32_le()?,
+            source_material_index: cursor.read_u32_le()?,
+            source_texture_combo_index: cursor.read_u32_le()?,
+            source_texture_count: cursor.read_u32_le()?,
+            name_hash: cursor.read_u64_le()?,
+        })
+    }
 }

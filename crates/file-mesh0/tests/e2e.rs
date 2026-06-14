@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use file_core::{align::is_aligned, AssetRead, AssetResult, MemoryAssetReader};
 
-use file_mesh0::{sections::*, Mesh0Owned, Mesh0View};
+use file_mesh0::*;
 
 const HEADER_BYTE_SIZE: u64 = 8;
 const SECTION_ENTRY_BYTE_SIZE: u64 = 12;
@@ -35,10 +35,10 @@ impl AssetRead for RecordingReader {
 }
 
 #[test]
-fn sectioned_asset_open_reads_only_header_and_table() {
+fn open_reads_only_header_and_table() {
     pollster::block_on(async {
-        let reader = RecordingReader::new(sample_mesh().write().unwrap());
-        let _ = Mesh0View::open(reader.clone()).await.unwrap();
+        let reader = RecordingReader::new(sample_mesh().write_bytes().unwrap());
+        let _ = Mesh0Reader::open(reader.clone()).await.unwrap();
         assert_eq!(
             reader.reads(),
             vec![(0, HEADER_BYTE_SIZE), (8, 3 * SECTION_ENTRY_BYTE_SIZE)]
@@ -47,55 +47,103 @@ fn sectioned_asset_open_reads_only_header_and_table() {
 }
 
 #[test]
-fn mesh0_open_accepts_duplicate_section_type() {
-    pollster::block_on(async {
-        let mut bytes = sample_mesh().write().unwrap().to_vec();
-        bytes[20..24].copy_from_slice(&section_type::MESH_INFO.to_le_bytes());
-        assert!(Mesh0View::open(MemoryAssetReader::new(Bytes::from(bytes)))
-            .await
-            .is_ok());
-    });
-}
-
-#[test]
-fn sectioned_asset_encode_layout_is_aligned() {
-    let bytes = sample_mesh().write().unwrap();
+fn builder_write_layout_is_aligned() {
+    let bytes = sample_mesh().write_bytes().unwrap();
     let first_offset = u64::from(read_u32_le(&bytes[12..16]));
     let second_offset = u64::from(read_u32_le(&bytes[24..28]));
+    let third_offset = u64::from(read_u32_le(&bytes[36..40]));
     assert!(is_aligned(first_offset, 8));
     assert!(is_aligned(second_offset, 8));
+    assert!(is_aligned(third_offset, 8));
 }
 
 #[test]
-fn mesh0_owned_encode_then_open() {
+fn mesh_info_header_is_lazy_and_vertices_are_lazy() {
     pollster::block_on(async {
-        let mesh = sample_mesh();
-        let bytes = mesh.write().unwrap();
-        let view = Mesh0View::open(MemoryAssetReader::new(bytes))
-            .await
-            .unwrap();
-        let item = view
-            .sections_by_type(section_type::MESH_INFO)
-            .next()
-            .unwrap();
-        let info = item.read_section_view().await.unwrap();
-        let SectionView::MeshInfo(info) = info else {
-            panic!("expected MESH_INFO section");
-        };
-        assert_eq!(info.default_lod, 0);
+        let reader = RecordingReader::new(sample_mesh().write_bytes().unwrap());
+        let mesh = Mesh0Reader::open(reader.clone()).await.unwrap();
+
+        let before_info = reader.reads().len();
+        let info = mesh.mesh_info().await.unwrap();
+        assert_eq!(info.header.default_lod, 0);
+        assert_eq!(info.header.vertex_count, 3);
+        assert_eq!(reader.reads().len(), before_info + 1);
+        assert_eq!(
+            reader.reads()[before_info].1,
+            MeshInfoHeader::BYTE_SIZE as u64
+        );
+
+        let before_vertices = reader.reads().len();
+        let vertices = info.vertex_bytes().await.unwrap();
+        assert_eq!(vertices.len(), 96);
+        assert_eq!(reader.reads().len(), before_vertices + 1);
+        assert_eq!(reader.reads().last().unwrap().1, 96);
     });
 }
 
 #[test]
-fn mesh0_open_does_not_read_lod_body() {
+fn render_variant_metadata_is_lazy_and_indices_are_lazy() {
     pollster::block_on(async {
-        let reader = RecordingReader::new(sample_mesh().write().unwrap());
-        let _ = Mesh0View::open(reader.clone()).await.unwrap();
+        let reader = RecordingReader::new(sample_mesh().write_bytes().unwrap());
+        let mesh = Mesh0Reader::open(reader.clone()).await.unwrap();
+
+        let before_variant = reader.reads().len();
+        let variant = mesh.render_variant(0).await.unwrap();
+        assert_eq!(variant.header.index_count, 3);
+        assert_eq!(variant.submeshes.len(), 1);
+        assert_eq!(reader.reads().len(), before_variant + 2);
         assert_eq!(
-            reader.reads(),
-            vec![(0, HEADER_BYTE_SIZE), (8, 3 * SECTION_ENTRY_BYTE_SIZE)]
+            reader.reads()[before_variant].1,
+            RenderVariantHeader::BYTE_SIZE as u64
+        );
+        assert_eq!(
+            reader.reads()[before_variant + 1].1,
+            (RenderVariantHeader::BYTE_SIZE + Mesh0Submesh::BYTE_SIZE + Mesh0DrawBatch::BYTE_SIZE)
+                as u64
+        );
+
+        let before_indices = reader.reads().len();
+        let indices = variant.index_bytes().await.unwrap();
+        assert_eq!(indices.len(), 6);
+        assert_eq!(reader.reads().len(), before_indices + 1);
+        assert_eq!(reader.reads().last().unwrap().1, 6);
+    });
+}
+
+#[test]
+fn section_readers_are_cached() {
+    pollster::block_on(async {
+        let reader = RecordingReader::new(sample_mesh().write_bytes().unwrap());
+        let mesh = Mesh0Reader::open(reader.clone()).await.unwrap();
+
+        let before = reader.reads().len();
+        let _ = mesh.mesh_info().await.unwrap();
+        let after_first = reader.reads().len();
+        let _ = mesh.mesh_info().await.unwrap();
+
+        assert!(after_first > before);
+        assert_eq!(reader.reads().len(), after_first);
+    });
+}
+
+#[test]
+fn duplicate_singleton_section_is_rejected() {
+    pollster::block_on(async {
+        let mut bytes = sample_mesh().write_bytes().unwrap().to_vec();
+        bytes[32..36].copy_from_slice(&section_type::MESH_INFO.to_le_bytes());
+        assert!(
+            Mesh0Reader::open(MemoryAssetReader::new(Bytes::from(bytes)))
+                .await
+                .is_err()
         );
     });
+}
+
+#[test]
+fn invalid_index_reference_is_rejected() {
+    let mut mesh = sample_mesh();
+    mesh.render_variants[0].index_bytes = Bytes::from(vec![9, 0, 1, 0, 2, 0]);
+    assert!(mesh.write_bytes().is_err());
 }
 
 #[test]
@@ -109,116 +157,27 @@ fn ref_section_u64_roundtrip() {
     assert_eq!(decoded.refs, refs.refs);
 }
 
-#[test]
-fn mesh0_lod_view_reads_metadata_without_blobs() {
-    pollster::block_on(async {
-        let reader = RecordingReader::new(sample_mesh().write().unwrap());
-        let view = Mesh0View::open(reader.clone()).await.unwrap();
-        let item = view.sections_by_type(section_type::LOD).next().unwrap();
-
-        let before = reader.reads().len();
-        let lod = item.read_section_view().await.unwrap();
-        let SectionView::Lod(lod) = lod else {
-            panic!("expected LOD section");
-        };
-        assert_eq!(lod.header.vertex_count, 3);
-        let reads = reader.reads();
-        assert_eq!(reads.len(), before + 2);
-        assert_eq!(reads[before].1, Mesh0LodHeader::BYTE_SIZE as u64);
-        assert_eq!(
-            reads[before + 1].1,
-            (Mesh0LodHeader::BYTE_SIZE + Mesh0Submesh::BYTE_SIZE + Mesh0DrawBatch::BYTE_SIZE)
-                as u64
-        );
-    });
-}
-
-#[test]
-fn section_table_item_caches_section_view() {
-    pollster::block_on(async {
-        let reader = RecordingReader::new(sample_mesh().write().unwrap());
-        let view = Mesh0View::open(reader.clone()).await.unwrap();
-        let item = view.sections_by_type(section_type::LOD).next().unwrap();
-
-        let before = reader.reads().len();
-        let _ = item.read_section_view().await.unwrap();
-        let after_first = reader.reads().len();
-        let _ = item.read_section_view().await.unwrap();
-
-        assert!(after_first > before);
-        assert_eq!(reader.reads().len(), after_first);
-    });
-}
-
-#[test]
-fn mesh0_lod_vertex_bytes_are_lazy() {
-    pollster::block_on(async {
-        let reader = RecordingReader::new(sample_mesh().write().unwrap());
-        let view = Mesh0View::open(reader.clone()).await.unwrap();
-        let item = view.sections_by_type(section_type::LOD).next().unwrap();
-        let lod = item.read_section_view().await.unwrap();
-        let SectionView::Lod(lod) = lod else {
-            panic!("expected LOD section");
-        };
-        let before = reader.reads().len();
-        let vertices = lod.vertex_bytes().await.unwrap();
-        assert_eq!(vertices.len(), 96);
-        let reads = reader.reads();
-        assert_eq!(reads.len(), before + 1);
-        assert_eq!(reads.last().unwrap().1, 96);
-    });
-}
-
-#[test]
-fn mesh0_read_owned_roundtrip() {
-    pollster::block_on(async {
-        let mesh = sample_mesh();
-        let bytes = mesh.write().unwrap();
-        let view = Mesh0View::open(MemoryAssetReader::new(bytes))
-            .await
-            .unwrap();
-        let owned = view.read_owned().await.unwrap();
-        let bytes2 = owned.write().unwrap();
-        let view2 = Mesh0View::open(MemoryAssetReader::new(bytes2))
-            .await
-            .unwrap();
-        let item = view2
-            .sections_by_type(section_type::MESH_INFO)
-            .next()
-            .unwrap();
-        let info = item.read_section_view().await.unwrap();
-        let SectionView::MeshInfo(info) = info else {
-            panic!("expected MESH_INFO section");
-        };
-        assert_eq!(info.default_lod, 0);
-    });
-}
-
-#[test]
-fn mesh0_invalid_lod_range_rejected() {
-    let mut mesh = sample_mesh();
-    let lod = mesh
-        .sections
-        .iter_mut()
-        .find_map(|section| match section {
-            SectionOwned::Lod(lod) => Some(lod.as_mut()),
-            _ => None,
-        })
-        .unwrap();
-    lod.submeshes[0].index_count = 999;
-    assert!(mesh.write().is_err());
-}
-
-fn sample_mesh() -> Mesh0Owned {
-    let info = MeshInfoSection {
-        mesh_flags: 0,
-        default_lod: 0,
-        bounds_min: [0.0; 3],
-        bounds_max: [1.0; 3],
-        bounding_sphere_center: [0.5; 3],
-        bounding_sphere_radius: 1.0,
-        source_format: 1,
-        source_version: 0,
+fn sample_mesh() -> Mesh0Builder {
+    let info = MeshInfoBuilder {
+        header: MeshInfoHeader {
+            mesh_flags: 0,
+            default_lod: 0,
+            bounds_min: [0.0; 3],
+            bounds_max: [1.0; 3],
+            bounding_sphere_center: [0.5; 3],
+            bounding_sphere_radius: 1.0,
+            source_format: 1,
+            source_version: 0,
+            primitive_topology: primitive_topology::TRIANGLE_LIST,
+            vertex_layout_id: vertex_layout::POSITION_NORMAL_UV0,
+            vertex_attribute_mask: vertex_attribute::POSITION
+                | vertex_attribute::NORMAL
+                | vertex_attribute::UV0,
+            vertex_stride: 32,
+            vertex_count: 3,
+            vertex_buffer_size: 0,
+        },
+        vertex_bytes: Bytes::from(vec![0; 96]),
     };
     let materials = MaterialSlotsSection {
         slots: vec![Mesh0MaterialSlot {
@@ -233,19 +192,14 @@ fn sample_mesh() -> Mesh0Owned {
             name_hash: 1,
         }],
     };
-    let lod = LodSectionOwned {
-        header: Mesh0LodHeader {
-            lod_level: 0,
-            lod_flags: 0,
-            screen_size: 1.0,
-            max_distance: 100.0,
+    let variant = RenderVariantBuilder {
+        header: RenderVariantHeader {
+            render_variant_index: 0,
+            render_variant_flags: 0,
+            lod_level: NO_LOD_LEVEL,
+            screen_size: 0.0,
+            max_distance: 0.0,
             primitive_topology: primitive_topology::TRIANGLE_LIST,
-            vertex_layout_id: vertex_layout::POSITION_NORMAL_UV0,
-            vertex_attribute_mask: vertex_attribute::POSITION
-                | vertex_attribute::NORMAL
-                | vertex_attribute::UV0,
-            vertex_stride: 32,
-            vertex_count: 3,
             index_count: 3,
             index_format: index_format::UINT16,
             bounds_min: [0.0; 3],
@@ -255,14 +209,11 @@ fn sample_mesh() -> Mesh0Owned {
             submesh_count: 0,
             draw_batch_count: 0,
             joint_palette_count: 0,
-            vertex_buffer_size: 0,
             index_buffer_size: 0,
         },
         submeshes: vec![Mesh0Submesh {
             submesh_id: 0,
             flags: 0,
-            vertex_start: 0,
-            vertex_count: 3,
             index_start: 0,
             index_count: 3,
             material_slot: 0,
@@ -283,8 +234,6 @@ fn sample_mesh() -> Mesh0Owned {
             render_queue: render_queue::OPAQUE,
             shader_hint: 0,
             priority: 0,
-            vertex_start: 0,
-            vertex_count: 3,
             index_start: 0,
             index_count: 3,
             source_skin_batch_index: 0,
@@ -294,16 +243,13 @@ fn sample_mesh() -> Mesh0Owned {
             source_texture_combo_index: 0,
         }],
         joint_palette: Vec::new(),
-        vertex_bytes: Bytes::from(vec![0; 96]),
-        index_bytes: Bytes::from(vec![0; 6]),
+        index_bytes: Bytes::from(vec![0, 0, 1, 0, 2, 0]),
     };
-    Mesh0Owned {
-        sections: vec![
-            SectionOwned::MeshInfo(info),
-            SectionOwned::MaterialSlots(materials),
-            SectionOwned::Lod(Box::new(lod)),
-        ],
-    }
+
+    let mut mesh = Mesh0Builder::new(info);
+    mesh.material_slots = Some(materials);
+    mesh.push_render_variant(variant);
+    mesh
 }
 
 fn read_u32_le(bytes: &[u8]) -> u32 {
