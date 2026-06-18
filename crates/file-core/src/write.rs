@@ -54,6 +54,12 @@ impl EncodeBuffer {
         self.bytes.extend_from_slice(&id.0);
     }
 
+    pub fn write_f32x3(&mut self, value: [f32; 3]) {
+        for item in value {
+            self.write_f32_le(item);
+        }
+    }
+
     pub fn pad_to_align(&mut self, align: usize) {
         if align <= 1 {
             return;

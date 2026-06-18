@@ -1,23 +1,18 @@
-pub mod animation_refs;
-pub mod attachment_refs;
-pub mod collision_refs;
-pub mod effect_refs;
-pub mod material_slots;
 pub mod mesh_info;
 pub mod render_variant;
-pub mod skeleton_refs;
-pub mod skinning;
-pub mod source_debug;
-pub mod source_features;
 
-pub use animation_refs::*;
-pub use attachment_refs::*;
-pub use collision_refs::*;
-pub use effect_refs::*;
-pub use material_slots::*;
-pub use mesh_info::*;
-pub use render_variant::*;
-pub use skeleton_refs::*;
-pub use skinning::*;
-pub use source_debug::*;
-pub use source_features::*;
+pub(crate) const MESH_INFO: u32 = 1;
+pub(crate) const RENDER_VARIANT: u32 = 2;
+pub(crate) const SKELETON: u32 = 3;
+pub(crate) const ANIMATION: u32 = 4;
+
+pub use file_anim0::Anim0Reader as AnimationReader;
+pub use file_skeleton0::Skeleton0Reader as SkeletonReader;
+pub use mesh_info::{
+    primitive_topology, vertex_attribute, vertex_layout, MeshInfoBuilder, MeshInfoHeader,
+    MeshInfoReader,
+};
+pub use render_variant::{
+    index_format, render_queue, Mesh0DrawBatch, Mesh0JointPaletteEntry, Mesh0Submesh,
+    RenderVariantBuilder, RenderVariantHeader, RenderVariantReader, NO_LOD_LEVEL,
+};

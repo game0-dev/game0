@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 file-core = { path = "../file-core" }
+file-anim0 = { path = "../file-anim0" }
+file-skeleton0 = { path = "../file-skeleton0" }
 bytes = "1"
 thiserror = "2"
 tokio = { workspace = true }

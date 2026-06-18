@@ -8,14 +8,14 @@ pub enum AssetError {
     #[error("unsupported format version: {0}")]
     UnsupportedFormatVersion(u32),
 
-    #[error("invalid section kind: {0}")]
-    InvalidSectionKind(u32),
+    #[error("invalid section type: {0}")]
+    InvalidSectionType(u32),
 
-    #[error("missing required section: kind={0}, key={1}")]
-    MissingRequiredSection(u32, u32),
+    #[error("missing required section: section_type={0}")]
+    MissingRequiredSection(u32),
 
-    #[error("duplicate section: kind={kind}, key={key}")]
-    DuplicateSection { kind: u32, key: u32 },
+    #[error("duplicate section: section_type={0}")]
+    DuplicateSection(u32),
 
     #[error("offset overflow")]
     OffsetOverflow,

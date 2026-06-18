@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use file_core::{
-    align::{align_up, checked_range},
-    AssetError, AssetRead, AssetResult, DecodeCursor, EncodeBuffer,
+    align::align_up, AssetError, AssetRead, AssetResult, DecodeCursor, EncodeBuffer,
+    OffsetAssetReader,
 };
 
 pub mod primitive_topology {
@@ -95,9 +95,7 @@ pub struct MeshInfoReader<R>
 where
     R: AssetRead + Clone + Send + Sync,
 {
-    reader: R,
-    offset: u64,
-    len: u32,
+    reader: OffsetAssetReader<R>,
     pub header: MeshInfoHeader,
 }
 
@@ -105,29 +103,16 @@ impl<R> MeshInfoReader<R>
 where
     R: AssetRead + Clone + Send + Sync,
 {
-    pub async fn read(reader: R, offset: u64, len: u32) -> AssetResult<Self> {
-        let header = MeshInfoHeader::read(
-            reader
-                .read_at(offset, MeshInfoHeader::BYTE_SIZE as u64)
-                .await?,
-        )?;
-        Ok(Self {
-            reader,
-            offset,
-            len,
-            header,
-        })
+    pub async fn read(reader: OffsetAssetReader<R>) -> AssetResult<Self> {
+        let header =
+            MeshInfoHeader::read(reader.read_at(0, MeshInfoHeader::BYTE_SIZE as u64).await?)?;
+        Ok(Self { reader, header })
     }
 
     pub async fn vertex_bytes(&self) -> AssetResult<Bytes> {
         let offset = self.header.vertex_buffer_offset()?;
         let size = u64::from(self.header.vertex_buffer_size);
-        checked_range(u64::from(self.len), offset, size)?;
-        let absolute = self
-            .offset
-            .checked_add(offset)
-            .ok_or(AssetError::OffsetOverflow)?;
-        self.reader.read_at(absolute, size).await
+        self.reader.read_at(offset, size).await
     }
 
     pub async fn read_builder(&self) -> AssetResult<MeshInfoBuilder> {
@@ -157,24 +142,22 @@ impl MeshInfoBuilder {
     }
 
     pub fn validate(&self) -> AssetResult<()> {
-        if self.header.vertex_stride == 0 {
-            return Err(AssetError::InvalidData(
-                "vertex_stride must be greater than zero",
-            ));
-        }
-        if self.header.vertex_count == 0 {
-            return Err(AssetError::InvalidData(
-                "empty mesh vertex buffer is invalid",
-            ));
-        }
         if self.header.primitive_topology != primitive_topology::TRIANGLE_LIST {
             return Err(AssetError::InvalidData("unsupported primitive topology"));
         }
-        let expected_len = self
-            .header
-            .vertex_count
-            .checked_mul(self.header.vertex_stride)
-            .ok_or(AssetError::OffsetOverflow)?;
+        let expected_len = if self.header.vertex_count == 0 {
+            0
+        } else {
+            if self.header.vertex_stride == 0 {
+                return Err(AssetError::InvalidData(
+                    "vertex_stride must be greater than zero when vertex_count is non-zero",
+                ));
+            }
+            self.header
+                .vertex_count
+                .checked_mul(self.header.vertex_stride)
+                .ok_or(AssetError::OffsetOverflow)?
+        };
         if self.vertex_bytes.len() != expected_len as usize {
             return Err(AssetError::InvalidData("invalid vertex buffer size"));
         }

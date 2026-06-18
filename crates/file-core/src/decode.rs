@@ -69,3 +69,27 @@ impl<'a> DecodeCursor<'a> {
         Ok(AssetId128(id))
     }
 }
+
+pub fn decode_table<T>(
+    bytes: &[u8],
+    stride: usize,
+    decode: fn(&mut DecodeCursor<'_>) -> AssetResult<T>,
+) -> AssetResult<Vec<T>> {
+    if stride == 0 || bytes.len() % stride != 0 {
+        return Err(AssetError::InvalidData("invalid table size"));
+    }
+    let mut cursor = DecodeCursor::new(bytes);
+    let mut values = Vec::with_capacity(bytes.len() / stride);
+    while cursor.remaining() > 0 {
+        values.push(decode(&mut cursor)?);
+    }
+    Ok(values)
+}
+
+pub fn read_f32x3(cursor: &mut DecodeCursor<'_>) -> AssetResult<[f32; 3]> {
+    Ok([
+        cursor.read_f32_le()?,
+        cursor.read_f32_le()?,
+        cursor.read_f32_le()?,
+    ])
+}

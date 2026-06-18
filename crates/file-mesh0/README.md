@@ -11,8 +11,9 @@ Mesh0 file
 │  ├─ version: u32
 │  └─ section_count: u32
 │
-├─ SectionTableItem[section_count]     12 bytes each
+├─ SectionTableItem[section_count]     16 bytes each
 │  ├─ section_type: u32
+│  ├─ file_id: u32                     0 means inline section body
 │  ├─ offset: u32                      absolute file offset
 │  └─ len: u32                         section body byte length
 │
@@ -21,10 +22,8 @@ Mesh0 file
 └─ section bodies                      each body starts at an 8-byte boundary
    ├─ MESH_INFO
    ├─ MATERIAL_SLOTS
-   ├─ SKINNING
-   ├─ *_REFS
-   ├─ SOURCE_FEATURES
-   ├─ SOURCE_DEBUG
+   ├─ SKELETON
+   ├─ ANIMATION
    └─ RENDER_VARIANT
 ```
 
@@ -56,19 +55,12 @@ MESH_INFO
 MATERIAL_SLOTS
 └─ Mesh0MaterialSlot[]                 44 bytes each
 
-SKINNING
-└─ Mesh0Skinning                       36 bytes
+SKELETON
+└─ skeleton0 bytes                     present only when table file_id == 0
 
-SKELETON_REFS / ANIMATION_REFS /
-EFFECT_REFS / COLLISION_REFS /
-ATTACHMENT_REFS
-└─ u64[]                               asset ids
+ANIMATION
+└─ anim0 bytes                         present only when table file_id == 0
 
-SOURCE_FEATURES
-└─ Mesh0SourceFeature[]                24 bytes each
-
-SOURCE_DEBUG
-└─ opaque bytes
 ```
 
 MESH_INFO stores the required mesh metadata and shared parent vertex buffer.
