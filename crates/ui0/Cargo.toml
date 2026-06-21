@@ -1,0 +1,18 @@
+[package]
+name = "ui0"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+slotmap.workspace = true
+tokio.workspace = true
+winit.workspace = true
+
+[[example]]
+name = "hello_window"
+path = "examples/hello_window.rs"
+
+[[example]]
+name = "background_task"
+path = "examples/background_task.rs"
