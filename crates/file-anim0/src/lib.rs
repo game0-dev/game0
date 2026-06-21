@@ -1,7 +1,39 @@
 use bytes::Bytes;
 use file_core::{AssetError, AssetReader, AssetResult, DecodeCursor, EncodeBuffer};
 
-pub const ANIM0_VERSION: u32 = 1;
+#[derive(Debug, Clone)]
+struct Anim0Header {
+    clip_count: u32,
+    clip_offset: u64,
+}
+
+impl Anim0Header {
+    const VERSION: u32 = 1;
+    const BYTE_SIZE: u64 = 8;
+
+    fn read(cursor: &mut DecodeCursor) -> AssetResult<Self> {
+        let version = cursor.read_u32_le()?;
+        if version != Self::VERSION {
+            return Err(AssetError::UnsupportedFormatVersion(version));
+        }
+        Ok(Self {
+            clip_count: cursor.read_u32_le()?,
+            clip_offset: Self::BYTE_SIZE,
+        })
+    }
+
+    fn new(clip_count: u32) -> Self {
+        Self {
+            clip_count,
+            clip_offset: Self::BYTE_SIZE,
+        }
+    }
+
+    fn write(&self, out: &mut EncodeBuffer) {
+        out.write_u32_le(Self::VERSION);
+        out.write_u32_le(self.clip_count);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Anim0Reader {
@@ -44,13 +76,11 @@ impl Anim0Reader {
         R: AssetReader,
     {
         let mut offset = 0;
-        let bytes = read_chunk(&reader, &mut offset, 8).await?;
+        let bytes = read_chunk(&reader, &mut offset, Anim0Header::BYTE_SIZE).await?;
         let mut cursor = DecodeCursor::new(bytes);
-        let version = cursor.read_u32_le()?;
-        if version != ANIM0_VERSION {
-            return Err(AssetError::UnsupportedFormatVersion(version));
-        }
-        let clip_count = cursor.read_u32_le()? as usize;
+        let header = Anim0Header::read(&mut cursor)?;
+        offset = header.clip_offset;
+        let clip_count = usize::try_from(header.clip_count)?;
         let mut clips = Vec::with_capacity(clip_count);
         for _ in 0..clip_count {
             clips.push(read_animation_clip(&reader, &mut offset).await?);
@@ -60,11 +90,9 @@ impl Anim0Reader {
 
     pub fn read_bytes(bytes: Bytes) -> AssetResult<Self> {
         let mut cursor = DecodeCursor::new(bytes);
-        let version = cursor.read_u32_le()?;
-        if version != ANIM0_VERSION {
-            return Err(AssetError::UnsupportedFormatVersion(version));
-        }
-        let clip_count = cursor.read_u32_le()? as usize;
+        let header = Anim0Header::read(&mut cursor)?;
+        cursor.seek(usize::try_from(header.clip_offset)?)?;
+        let clip_count = usize::try_from(header.clip_count)?;
         let mut clips = Vec::with_capacity(clip_count);
         for _ in 0..clip_count {
             clips.push(Anim0AnimationClip::read(&mut cursor)?);
@@ -77,8 +105,7 @@ impl Anim0Reader {
 
     pub fn write(&self) -> AssetResult<Bytes> {
         let mut out = EncodeBuffer::new();
-        out.write_u32_le(ANIM0_VERSION);
-        out.write_u32_le(u32::try_from(self.clips.len())?);
+        Anim0Header::new(u32::try_from(self.clips.len())?).write(&mut out);
         for clip in &self.clips {
             clip.write(&mut out)?;
         }

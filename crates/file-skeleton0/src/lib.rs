@@ -1,7 +1,55 @@
 use bytes::Bytes;
 use file_core::{AssetError, AssetReader, AssetResult, DecodeCursor, EncodeBuffer};
 
-pub const SKELETON0_VERSION: u32 = 1;
+#[derive(Debug, Clone)]
+struct Skeleton0Header {
+    bone_count: u32,
+    bone_offset: u64,
+    bone_len: u64,
+    file_len: u64,
+}
+
+impl Skeleton0Header {
+    const VERSION: u32 = 1;
+    const BYTE_SIZE: u64 = 8;
+
+    async fn read<R>(reader: &R) -> AssetResult<Self>
+    where
+        R: AssetReader,
+    {
+        let mut cursor = DecodeCursor::from_reader(reader, Self::BYTE_SIZE).await?;
+        Self::read_from_cursor(&mut cursor)
+    }
+
+    fn read_from_cursor(cursor: &mut DecodeCursor) -> AssetResult<Self> {
+        let version = cursor.read_u32_le()?;
+        if version != Self::VERSION {
+            return Err(AssetError::UnsupportedFormatVersion(version));
+        }
+        Self::new(cursor.read_u32_le()?)
+    }
+
+    fn new(bone_count: u32) -> AssetResult<Self> {
+        let bone_offset = Self::BYTE_SIZE;
+        let bone_len = u64::from(bone_count)
+            .checked_mul(Skeleton0Bone::BYTE_SIZE as u64)
+            .ok_or(AssetError::OffsetOverflow)?;
+        let file_len = bone_offset
+            .checked_add(bone_len)
+            .ok_or(AssetError::OffsetOverflow)?;
+        Ok(Self {
+            bone_count,
+            bone_offset,
+            bone_len,
+            file_len,
+        })
+    }
+
+    fn write(&self, out: &mut EncodeBuffer) {
+        out.write_u32_le(Self::VERSION);
+        out.write_u32_le(self.bone_count);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Skeleton0Reader {
@@ -59,33 +107,25 @@ impl Skeleton0Reader {
     where
         R: AssetReader,
     {
-        let header = reader.read_at(0, 8).await?;
-        let mut cursor = DecodeCursor::new(header);
-        let version = cursor.read_u32_le()?;
-        if version != SKELETON0_VERSION {
-            return Err(AssetError::UnsupportedFormatVersion(version));
-        }
-        let bone_count = cursor.read_u32_le()? as u64;
-        let len = 8_u64
-            .checked_add(
-                bone_count
-                    .checked_mul(Skeleton0Bone::BYTE_SIZE as u64)
-                    .ok_or(AssetError::OffsetOverflow)?,
-            )
-            .ok_or(AssetError::OffsetOverflow)?;
-        Self::read_bytes(reader.read_at(0, len).await?)
+        let header = Skeleton0Header::read(&reader).await?;
+        Self::read_bytes(reader.read_at(0, header.file_len).await?)
     }
 
     pub fn read_bytes(bytes: Bytes) -> AssetResult<Self> {
         let mut cursor = DecodeCursor::new(bytes);
-        let version = cursor.read_u32_le()?;
-        if version != SKELETON0_VERSION {
-            return Err(AssetError::UnsupportedFormatVersion(version));
-        }
-        let bone_count = cursor.read_u32_le()? as usize;
+        let header = Skeleton0Header::read_from_cursor(&mut cursor)?;
+        cursor.seek(usize::try_from(header.bone_offset)?)?;
+        let bone_count = usize::try_from(header.bone_count)?;
         let mut bones = Vec::with_capacity(bone_count);
         for _ in 0..bone_count {
             bones.push(Skeleton0Bone::read(&mut cursor)?);
+        }
+        let bone_end = header
+            .bone_offset
+            .checked_add(header.bone_len)
+            .ok_or(AssetError::OffsetOverflow)?;
+        if cursor.position() != usize::try_from(bone_end)? {
+            return Err(AssetError::InvalidData("invalid skeleton0 bone table size"));
         }
         if cursor.remaining() != 0 {
             return Err(AssetError::InvalidData("trailing skeleton0 bytes"));
@@ -95,8 +135,7 @@ impl Skeleton0Reader {
 
     pub fn write(&self) -> AssetResult<Bytes> {
         let mut out = EncodeBuffer::new();
-        out.write_u32_le(SKELETON0_VERSION);
-        out.write_u32_le(u32::try_from(self.bones.len())?);
+        Skeleton0Header::new(u32::try_from(self.bones.len())?)?.write(&mut out);
         for bone in &self.bones {
             bone.write(&mut out);
         }

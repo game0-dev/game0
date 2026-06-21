@@ -8,11 +8,8 @@ pub(crate) const ANIMATION: u32 = 4;
 
 pub use file_anim0::Anim0Reader as AnimationReader;
 pub use file_skeleton0::Skeleton0Reader as SkeletonReader;
-pub use mesh_info::{
-    primitive_topology, vertex_attribute, vertex_layout, MeshInfoBuilder, MeshInfoHeader,
-    MeshInfoReader,
-};
+pub use mesh_info::MeshInfoHeader;
 pub use render_variant::{
-    index_format, render_queue, Mesh0DrawBatch, Mesh0JointPaletteEntry, Mesh0Submesh,
-    RenderVariantBuilder, RenderVariantHeader, RenderVariantReader, NO_LOD_LEVEL,
+    render_queue, Mesh0DrawBatch, Mesh0JointPaletteEntry, Mesh0Submesh, RenderVariantBuilder,
+    RenderVariantReader,
 };

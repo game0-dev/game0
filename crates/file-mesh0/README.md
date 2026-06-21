@@ -33,8 +33,7 @@ sections are optional singletons, and `RENDER_VARIANT` may appear multiple
 times. Duplicate singleton sections are rejected.
 
 Opening a reader does not read section bodies. Each accessor reads and caches its
-section on demand. Shared vertex bytes and render variant index bytes remain
-lazy.
+section on demand. Render variant vertex and index bytes remain lazy.
 
 ## Section Bodies
 
@@ -43,17 +42,10 @@ record:
 
 ```text
 MESH_INFO
-├─ MeshInfoHeader                      80 bytes
-│  ├─ mesh flags/default lod
-│  ├─ bounds
-│  ├─ source format/version
-│  ├─ primitive/vertex metadata
-│  └─ vertex_buffer_size: u32
-├─ padding                             zero bytes, aligned to 8
-└─ shared vertex bytes
-
-MATERIAL_SLOTS
-└─ Mesh0MaterialSlot[]                 44 bytes each
+└─ MeshInfoHeader                      28 bytes
+   ├─ bounding_box_min: [f32; 3]
+   ├─ bounding_box_max: [f32; 3]
+   └─ bounding_sphere_radius: f32
 
 SKELETON
 └─ skeleton0 bytes                     present only when table file_id == 0
@@ -63,26 +55,23 @@ ANIMATION
 
 ```
 
-MESH_INFO stores the required mesh metadata and shared parent vertex buffer.
-Render variants reference that shared vertex buffer directly through their index
-stream. A render variant may optionally carry a `lod_level`; `NO_LOD_LEVEL`
-means the variant is just a skin/render profile rather than distance LOD data.
+MESH_INFO stores source model visual bounds. Render variants use a fixed M2-like
+skinned vertex layout with position, normal, uv0, uv1, joints, and weights.
 
 ```text
 RENDER_VARIANT section body
-├─ RenderVariantHeader                 88 bytes
-│  ├─ render_variant_index: u32
-│  ├─ lod_level: u32                   u32::MAX means none
-│  ├─ primitive/index metadata
-│  ├─ bounds
+├─ RenderVariantHeader                 20 bytes
 │  ├─ submesh_count: u32
 │  ├─ draw_batch_count: u32
 │  ├─ joint_palette_count: u32
+│  ├─ vertex_buffer_size: u32
 │  └─ index_buffer_size: u32
 │
 ├─ Mesh0Submesh[]                      68 bytes each
 ├─ Mesh0DrawBatch[]                    56 bytes each
 ├─ Mesh0JointPaletteEntry[]            16 bytes each
+├─ padding                             zero bytes, aligned to 8
+├─ vertex bytes
 ├─ padding                             zero bytes, aligned to 8
 └─ index bytes
 ```
@@ -92,10 +81,10 @@ RENDER_VARIANT section body
 `Mesh0Reader<R>` is the runtime API. It keeps section bodies lazy:
 
 ```text
-mesh.mesh_info().await?          reads only MeshInfoHeader
-info.vertex_bytes().await?       reads shared vertex bytes
-mesh.render_variant(0).await?    reads render variant metadata
-variant.index_bytes().await?     reads render variant index bytes
+mesh.read_mesh_info().await?          reads only MeshInfoHeader
+mesh.read_render_variant(0).await?    reads render variant metadata
+variant.vertex_bytes().await?         reads render variant vertex bytes
+variant.index_bytes().await?          reads render variant index bytes
 ```
 
 `Mesh0Builder` is the converter API. It owns all bytes in memory and writes a
