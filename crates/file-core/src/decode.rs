@@ -67,12 +67,16 @@ impl DecodeCursor {
         Ok(f32::from_le_bytes(self.read_bytes(4)?.try_into().unwrap()))
     }
 
+    pub fn read_f32x<const N: usize>(&mut self) -> AssetResult<[f32; N]> {
+        let mut value = [0.0; N];
+        for item in &mut value {
+            *item = self.read_f32_le()?;
+        }
+        Ok(value)
+    }
+
     pub fn read_f32x3(&mut self) -> AssetResult<[f32; 3]> {
-        Ok([
-            self.read_f32_le()?,
-            self.read_f32_le()?,
-            self.read_f32_le()?,
-        ])
+        self.read_f32x()
     }
 
     pub fn read_bytes(&mut self, len: usize) -> AssetResult<&[u8]> {

@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use file_anim0::{Anim0AnimationClip, Anim0BoneAnimationTrack, Anim0QuatKey, Anim0Vec3Key};
+use file_anim0::{
+    Anim0AnimationClip, Anim0BoneAnimationTrack, Anim0QuatKey, Anim0TrackInfo, Anim0Vec3Key,
+};
 use file_core::{align::is_aligned, AssetReader, AssetResult, MemoryAssetReader};
 
 use file_mesh0::*;
@@ -180,16 +182,25 @@ fn animation_section_roundtrip_preserves_sequence_identity() {
                 sub_animation_id: 0,
                 duration_ms: 900,
                 flags: 1,
+                movement_speed: 0.0,
+                frequency: 0,
+                replay_range_ms: None,
+                bounds: None,
+                next_animation: None,
+                aliasing: None,
                 bone_tracks: vec![Anim0BoneAnimationTrack {
                     bone_index: 3,
+                    translation_info: Anim0TrackInfo::default(),
                     translations: vec![Anim0Vec3Key {
                         time_ms: 0,
                         value: [1.0, 2.0, 3.0],
                     }],
+                    rotation_info: Anim0TrackInfo::default(),
                     rotations: vec![Anim0QuatKey {
                         time_ms: 0,
                         value: [0.0, 0.0, 0.0, 1.0],
                     }],
+                    scale_info: Anim0TrackInfo::default(),
                     scales: vec![Anim0Vec3Key {
                         time_ms: 0,
                         value: [1.0, 1.0, 1.0],
@@ -202,6 +213,12 @@ fn animation_section_roundtrip_preserves_sequence_identity() {
                 sub_animation_id: 1,
                 duration_ms: 700,
                 flags: 0,
+                movement_speed: 0.0,
+                frequency: 0,
+                replay_range_ms: None,
+                bounds: None,
+                next_animation: None,
+                aliasing: None,
                 bone_tracks: Vec::new(),
             },
         ],
