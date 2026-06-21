@@ -1,13 +1,30 @@
-use crate::{AssetError, AssetId128, AssetResult};
+use bytes::Bytes;
 
-pub struct DecodeCursor<'a> {
-    bytes: &'a [u8],
+use crate::{AssetError, AssetId128, AssetReader, AssetResult};
+
+pub struct DecodeCursor {
+    bytes: Bytes,
     pos: usize,
 }
 
-impl<'a> DecodeCursor<'a> {
-    pub fn new(bytes: &'a [u8]) -> Self {
+impl DecodeCursor {
+    pub fn new(bytes: Bytes) -> Self {
         Self { bytes, pos: 0 }
+    }
+
+    pub async fn from_reader<R>(reader: &R, len: u64) -> AssetResult<Self>
+    where
+        R: AssetReader,
+    {
+        Self::from_reader_at(reader, 0, len).await
+    }
+
+    pub async fn from_reader_at<R>(reader: &R, offset: u64, len: u64) -> AssetResult<Self>
+    where
+        R: AssetReader,
+    {
+        let bytes = reader.read_at(offset, len).await?;
+        Ok(Self::new(bytes))
     }
 
     pub fn position(&self) -> usize {
@@ -50,7 +67,15 @@ impl<'a> DecodeCursor<'a> {
         Ok(f32::from_le_bytes(self.read_bytes(4)?.try_into().unwrap()))
     }
 
-    pub fn read_bytes(&mut self, len: usize) -> AssetResult<&'a [u8]> {
+    pub fn read_f32x3(&mut self) -> AssetResult<[f32; 3]> {
+        Ok([
+            self.read_f32_le()?,
+            self.read_f32_le()?,
+            self.read_f32_le()?,
+        ])
+    }
+
+    pub fn read_bytes(&mut self, len: usize) -> AssetResult<&[u8]> {
         let end = self
             .pos
             .checked_add(len)
@@ -71,25 +96,22 @@ impl<'a> DecodeCursor<'a> {
 }
 
 pub fn decode_table<T>(
-    bytes: &[u8],
+    bytes: Bytes,
     stride: usize,
-    decode: fn(&mut DecodeCursor<'_>) -> AssetResult<T>,
+    decode: fn(&mut DecodeCursor) -> AssetResult<T>,
 ) -> AssetResult<Vec<T>> {
     if stride == 0 || bytes.len() % stride != 0 {
         return Err(AssetError::InvalidData("invalid table size"));
     }
+    let count = bytes.len() / stride;
     let mut cursor = DecodeCursor::new(bytes);
-    let mut values = Vec::with_capacity(bytes.len() / stride);
+    let mut values = Vec::with_capacity(count);
     while cursor.remaining() > 0 {
         values.push(decode(&mut cursor)?);
     }
     Ok(values)
 }
 
-pub fn read_f32x3(cursor: &mut DecodeCursor<'_>) -> AssetResult<[f32; 3]> {
-    Ok([
-        cursor.read_f32_le()?,
-        cursor.read_f32_le()?,
-        cursor.read_f32_le()?,
-    ])
+pub fn read_f32x3(cursor: &mut DecodeCursor) -> AssetResult<[f32; 3]> {
+    cursor.read_f32x3()
 }

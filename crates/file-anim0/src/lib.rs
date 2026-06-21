@@ -1,7 +1,5 @@
 use bytes::Bytes;
-use file_core::{
-    AssetError, AssetRead, AssetResult, DecodeCursor, EncodeBuffer, OffsetAssetReader,
-};
+use file_core::{AssetError, AssetReader, AssetResult, DecodeCursor, EncodeBuffer};
 
 pub const ANIM0_VERSION: u32 = 1;
 
@@ -41,13 +39,13 @@ pub struct Anim0QuatKey {
 }
 
 impl Anim0Reader {
-    pub async fn read<R>(reader: OffsetAssetReader<R>) -> AssetResult<Self>
+    pub async fn read<R>(reader: R) -> AssetResult<Self>
     where
-        R: AssetRead + Clone + Send + Sync,
+        R: AssetReader,
     {
         let mut offset = 0;
         let bytes = read_chunk(&reader, &mut offset, 8).await?;
-        let mut cursor = DecodeCursor::new(&bytes);
+        let mut cursor = DecodeCursor::new(bytes);
         let version = cursor.read_u32_le()?;
         if version != ANIM0_VERSION {
             return Err(AssetError::UnsupportedFormatVersion(version));
@@ -61,7 +59,7 @@ impl Anim0Reader {
     }
 
     pub fn read_bytes(bytes: Bytes) -> AssetResult<Self> {
-        let mut cursor = DecodeCursor::new(&bytes);
+        let mut cursor = DecodeCursor::new(bytes);
         let version = cursor.read_u32_le()?;
         if version != ANIM0_VERSION {
             return Err(AssetError::UnsupportedFormatVersion(version));
@@ -88,15 +86,12 @@ impl Anim0Reader {
     }
 }
 
-async fn read_animation_clip<R>(
-    reader: &OffsetAssetReader<R>,
-    offset: &mut u64,
-) -> AssetResult<Anim0AnimationClip>
+async fn read_animation_clip<R>(reader: &R, offset: &mut u64) -> AssetResult<Anim0AnimationClip>
 where
-    R: AssetRead + Clone + Send + Sync,
+    R: AssetReader,
 {
     let bytes = read_chunk(reader, offset, 20).await?;
-    let mut cursor = DecodeCursor::new(&bytes);
+    let mut cursor = DecodeCursor::new(bytes);
     let sequence_index = cursor.read_u32_le()?;
     let animation_id = cursor.read_u16_le()?;
     let sub_animation_id = cursor.read_u16_le()?;
@@ -118,14 +113,14 @@ where
 }
 
 async fn read_bone_animation_track<R>(
-    reader: &OffsetAssetReader<R>,
+    reader: &R,
     offset: &mut u64,
 ) -> AssetResult<Anim0BoneAnimationTrack>
 where
-    R: AssetRead + Clone + Send + Sync,
+    R: AssetReader,
 {
     let bytes = read_chunk(reader, offset, 4).await?;
-    let mut cursor = DecodeCursor::new(&bytes);
+    let mut cursor = DecodeCursor::new(bytes);
     let bone_index = cursor.read_u32_le()?;
     let translations = read_vec3_keys_from_reader(reader, offset).await?;
     let rotations = read_quat_keys_from_reader(reader, offset).await?;
@@ -139,17 +134,17 @@ where
 }
 
 async fn read_vec3_keys_from_reader<R>(
-    reader: &OffsetAssetReader<R>,
+    reader: &R,
     offset: &mut u64,
 ) -> AssetResult<Vec<Anim0Vec3Key>>
 where
-    R: AssetRead + Clone + Send + Sync,
+    R: AssetReader,
 {
     let count = read_count(reader, offset).await?;
     let mut keys = Vec::with_capacity(count);
     for _ in 0..count {
         let bytes = read_chunk(reader, offset, 16).await?;
-        let mut cursor = DecodeCursor::new(&bytes);
+        let mut cursor = DecodeCursor::new(bytes);
         keys.push(Anim0Vec3Key {
             time_ms: cursor.read_u32_le()?,
             value: [
@@ -163,17 +158,17 @@ where
 }
 
 async fn read_quat_keys_from_reader<R>(
-    reader: &OffsetAssetReader<R>,
+    reader: &R,
     offset: &mut u64,
 ) -> AssetResult<Vec<Anim0QuatKey>>
 where
-    R: AssetRead + Clone + Send + Sync,
+    R: AssetReader,
 {
     let count = read_count(reader, offset).await?;
     let mut keys = Vec::with_capacity(count);
     for _ in 0..count {
         let bytes = read_chunk(reader, offset, 20).await?;
-        let mut cursor = DecodeCursor::new(&bytes);
+        let mut cursor = DecodeCursor::new(bytes);
         keys.push(Anim0QuatKey {
             time_ms: cursor.read_u32_le()?,
             value: [
@@ -187,22 +182,18 @@ where
     Ok(keys)
 }
 
-async fn read_count<R>(reader: &OffsetAssetReader<R>, offset: &mut u64) -> AssetResult<usize>
+async fn read_count<R>(reader: &R, offset: &mut u64) -> AssetResult<usize>
 where
-    R: AssetRead + Clone + Send + Sync,
+    R: AssetReader,
 {
     let bytes = read_chunk(reader, offset, 4).await?;
-    let mut cursor = DecodeCursor::new(&bytes);
+    let mut cursor = DecodeCursor::new(bytes);
     Ok(cursor.read_u32_le()? as usize)
 }
 
-async fn read_chunk<R>(
-    reader: &OffsetAssetReader<R>,
-    offset: &mut u64,
-    len: u64,
-) -> AssetResult<Bytes>
+async fn read_chunk<R>(reader: &R, offset: &mut u64, len: u64) -> AssetResult<Bytes>
 where
-    R: AssetRead + Clone + Send + Sync,
+    R: AssetReader,
 {
     let bytes = reader.read_at(*offset, len).await?;
     *offset = offset.checked_add(len).ok_or(AssetError::OffsetOverflow)?;
@@ -210,7 +201,7 @@ where
 }
 
 impl Anim0AnimationClip {
-    fn read(cursor: &mut DecodeCursor<'_>) -> AssetResult<Self> {
+    fn read(cursor: &mut DecodeCursor) -> AssetResult<Self> {
         let sequence_index = cursor.read_u32_le()?;
         let animation_id = cursor.read_u16_le()?;
         let sub_animation_id = cursor.read_u16_le()?;
@@ -246,7 +237,7 @@ impl Anim0AnimationClip {
 }
 
 impl Anim0BoneAnimationTrack {
-    fn read(cursor: &mut DecodeCursor<'_>) -> AssetResult<Self> {
+    fn read(cursor: &mut DecodeCursor) -> AssetResult<Self> {
         let bone_index = cursor.read_u32_le()?;
         let translations = read_vec3_keys(cursor)?;
         let rotations = read_quat_keys(cursor)?;
@@ -268,7 +259,7 @@ impl Anim0BoneAnimationTrack {
     }
 }
 
-fn read_vec3_keys(cursor: &mut DecodeCursor<'_>) -> AssetResult<Vec<Anim0Vec3Key>> {
+fn read_vec3_keys(cursor: &mut DecodeCursor) -> AssetResult<Vec<Anim0Vec3Key>> {
     let count = cursor.read_u32_le()? as usize;
     let mut keys = Vec::with_capacity(count);
     for _ in 0..count {
@@ -284,7 +275,7 @@ fn read_vec3_keys(cursor: &mut DecodeCursor<'_>) -> AssetResult<Vec<Anim0Vec3Key
     Ok(keys)
 }
 
-fn read_quat_keys(cursor: &mut DecodeCursor<'_>) -> AssetResult<Vec<Anim0QuatKey>> {
+fn read_quat_keys(cursor: &mut DecodeCursor) -> AssetResult<Vec<Anim0QuatKey>> {
     let count = cursor.read_u32_le()? as usize;
     let mut keys = Vec::with_capacity(count);
     for _ in 0..count {

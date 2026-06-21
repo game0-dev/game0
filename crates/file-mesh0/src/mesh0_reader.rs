@@ -1,21 +1,13 @@
 use std::future::Future;
 
-use file_core::{
-    AssetError, AssetRead, AssetReadExt, AssetResult, DecodeCursor, OffsetAssetReader,
-};
+use file_core::{AssetError, AssetReader, AssetResult, DecodeCursor};
 use tokio::sync::OnceCell;
 
 use crate::sections::{
-    AnimationReader, MeshInfoReader, RenderVariantReader, SkeletonReader, ANIMATION, MESH_INFO,
+    AnimationReader, MeshInfoHeader, RenderVariantReader, SkeletonReader, ANIMATION, MESH_INFO,
     RENDER_VARIANT, SKELETON,
 };
 use crate::MESH0_VERSION;
-
-pub(crate) struct Mesh0Header;
-
-impl Mesh0Header {
-    pub(crate) const BYTE_SIZE: usize = 8;
-}
 
 #[derive(Clone)]
 pub struct SectionEntry<S> {
@@ -27,7 +19,7 @@ pub struct SectionEntry<S> {
 }
 
 impl<S> SectionEntry<S> {
-    pub(crate) const BYTE_SIZE: usize = 16;
+    pub(crate) const BYTE_SIZE: u64 = 16;
 
     fn new(section_type: u32, file_id: u32, offset: u32, len: u32) -> Self {
         Self {
@@ -41,16 +33,16 @@ impl<S> SectionEntry<S> {
 
     async fn read<R, F, Fut>(&self, reader: &R, read_section: F) -> AssetResult<&S>
     where
-        R: AssetRead + Clone + Send + Sync,
-        F: FnOnce(OffsetAssetReader<R>) -> Fut,
+        R: AssetReader,
+        F: FnOnce(R) -> Fut,
         Fut: Future<Output = AssetResult<S>>,
     {
         self.section
             .get_or_try_init(|| async {
                 let reader = if self.file_id != 0 {
-                    reader.clone().with_file(self.file_id)
+                    reader.with_file(self.file_id)?
                 } else {
-                    reader.clone().with_offset_accumulate(self.offset as u64)
+                    reader.with_offset_accumulate(u64::from(self.offset))?
                 };
 
                 read_section(reader).await
@@ -62,10 +54,10 @@ impl<S> SectionEntry<S> {
 #[derive(Clone)]
 pub struct Mesh0Reader<R>
 where
-    R: AssetRead + Clone + Send + Sync,
+    R: AssetReader,
 {
     reader: R,
-    mesh_info: Option<SectionEntry<MeshInfoReader<R>>>,
+    mesh_info: Option<SectionEntry<MeshInfoHeader>>,
     render_variants: Vec<SectionEntry<RenderVariantReader<R>>>,
     skeleton: Option<SectionEntry<SkeletonReader>>,
     animation: Vec<SectionEntry<AnimationReader>>,
@@ -73,24 +65,23 @@ where
 
 impl<R> Mesh0Reader<R>
 where
-    R: AssetRead + Clone + Send + Sync,
+    R: AssetReader,
 {
+    pub(crate) const HEADER_BYTE_SIZE: u64 = 8;
+
     pub async fn open(reader: R) -> AssetResult<Self> {
-        let header_bytes = reader.read_at(0, Mesh0Header::BYTE_SIZE as u64).await?;
-        let mut header = DecodeCursor::new(&header_bytes);
+        let mut header = DecodeCursor::from_reader(&reader, Self::HEADER_BYTE_SIZE).await?;
         let version = header.read_u32_le()?;
         if version != MESH0_VERSION {
             return Err(AssetError::UnsupportedFormatVersion(version));
         }
         let section_count = header.read_u32_le()?;
         let table_len = u64::from(section_count)
-            .checked_mul(SectionEntry::<()>::BYTE_SIZE as u64)
+            .checked_mul(SectionEntry::<()>::BYTE_SIZE)
             .ok_or(AssetError::OffsetOverflow)?;
 
-        let table_bytes = reader
-            .read_at(Mesh0Header::BYTE_SIZE as u64, table_len)
-            .await?;
-        let mut table = DecodeCursor::new(&table_bytes);
+        let mut table =
+            DecodeCursor::from_reader_at(&reader, Self::HEADER_BYTE_SIZE, table_len).await?;
 
         let mut mesh = Self {
             reader,
@@ -137,13 +128,13 @@ where
         Ok(mesh)
     }
 
-    pub async fn read_mesh_info(&self) -> AssetResult<&MeshInfoReader<R>> {
+    pub async fn read_mesh_info(&self) -> AssetResult<&MeshInfoHeader> {
         let entry = self
             .mesh_info
             .as_ref()
             .ok_or(AssetError::InvalidData("missing mesh info section"))?;
 
-        entry.read(&self.reader, MeshInfoReader::read).await
+        entry.read(&self.reader, MeshInfoHeader::read).await
     }
 
     pub async fn read_skeleton(&self) -> AssetResult<Option<&SkeletonReader>> {

@@ -1,7 +1,5 @@
 use bytes::Bytes;
-use file_core::{
-    AssetError, AssetRead, AssetResult, DecodeCursor, EncodeBuffer, OffsetAssetReader,
-};
+use file_core::{AssetError, AssetReader, AssetResult, DecodeCursor, EncodeBuffer};
 
 pub const SKELETON0_VERSION: u32 = 1;
 
@@ -24,7 +22,7 @@ pub struct Skeleton0Bone {
 impl Skeleton0Bone {
     pub const BYTE_SIZE: usize = 4 + 4 + 2 + 2 + 12 + 64 + 64 + 4;
 
-    fn read(cursor: &mut DecodeCursor<'_>) -> AssetResult<Self> {
+    fn read(cursor: &mut DecodeCursor) -> AssetResult<Self> {
         let parent_index = cursor.read_i32_le()?;
         let flags = cursor.read_u32_le()?;
         let key_bone_id = cursor.read_u16_le()? as i16;
@@ -57,12 +55,12 @@ impl Skeleton0Bone {
 }
 
 impl Skeleton0Reader {
-    pub async fn read<R>(reader: OffsetAssetReader<R>) -> AssetResult<Self>
+    pub async fn read<R>(reader: R) -> AssetResult<Self>
     where
-        R: AssetRead + Clone + Send + Sync,
+        R: AssetReader,
     {
         let header = reader.read_at(0, 8).await?;
-        let mut cursor = DecodeCursor::new(&header);
+        let mut cursor = DecodeCursor::new(header);
         let version = cursor.read_u32_le()?;
         if version != SKELETON0_VERSION {
             return Err(AssetError::UnsupportedFormatVersion(version));
@@ -79,7 +77,7 @@ impl Skeleton0Reader {
     }
 
     pub fn read_bytes(bytes: Bytes) -> AssetResult<Self> {
-        let mut cursor = DecodeCursor::new(&bytes);
+        let mut cursor = DecodeCursor::new(bytes);
         let version = cursor.read_u32_le()?;
         if version != SKELETON0_VERSION {
             return Err(AssetError::UnsupportedFormatVersion(version));
@@ -106,7 +104,7 @@ impl Skeleton0Reader {
     }
 }
 
-fn read_f32x3(cursor: &mut DecodeCursor<'_>) -> AssetResult<[f32; 3]> {
+fn read_f32x3(cursor: &mut DecodeCursor) -> AssetResult<[f32; 3]> {
     Ok([
         cursor.read_f32_le()?,
         cursor.read_f32_le()?,
@@ -114,7 +112,7 @@ fn read_f32x3(cursor: &mut DecodeCursor<'_>) -> AssetResult<[f32; 3]> {
     ])
 }
 
-fn read_f32x16(cursor: &mut DecodeCursor<'_>) -> AssetResult<[f32; 16]> {
+fn read_f32x16(cursor: &mut DecodeCursor) -> AssetResult<[f32; 16]> {
     let mut value = [0.0; 16];
     for item in &mut value {
         *item = cursor.read_f32_le()?;

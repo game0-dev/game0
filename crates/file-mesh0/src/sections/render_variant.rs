@@ -1,12 +1,7 @@
 use bytes::Bytes;
-use file_core::{
-    align::align_up, AssetError, AssetRead, AssetResult, DecodeCursor, EncodeBuffer,
-    OffsetAssetReader,
-};
+use file_core::{AssetError, AssetReader, AssetResult, DecodeCursor, EncodeBuffer};
 
-use super::mesh_info::{primitive_topology, MeshInfoHeader};
-
-pub const NO_LOD_LEVEL: u32 = u32::MAX;
+use super::mesh_info::MeshInfoHeader;
 
 pub mod render_queue {
     pub const OPAQUE: u32 = 1;
@@ -15,86 +10,82 @@ pub mod render_queue {
     pub const ADDITIVE: u32 = 4;
 }
 
-pub mod index_format {
-    pub const UINT16: u32 = 1;
-    pub const UINT32: u32 = 2;
-}
-
 #[derive(Debug, Clone)]
-pub struct RenderVariantHeader {
-    pub render_variant_index: u32,
-    pub render_variant_flags: u32,
-    pub lod_level: u32,
-    pub screen_size: f32,
-    pub max_distance: f32,
-    pub primitive_topology: u32,
-    pub vertex_count: u32,
-    pub vertex_layout_id: u32,
-    pub vertex_attribute_mask: u32,
-    pub vertex_stride: u32,
-    pub index_count: u32,
-    pub index_format: u32,
-    pub bounds_min: [f32; 3],
-    pub bounds_max: [f32; 3],
-    pub bounding_sphere_center: [f32; 3],
-    pub bounding_sphere_radius: f32,
-    pub submesh_count: u32,
-    pub draw_batch_count: u32,
-    pub joint_palette_count: u32,
-    pub vertex_buffer_size: u32,
-    pub index_buffer_size: u32,
+struct RenderVariantHeader {
+    submesh_count: u32,
+    draw_batch_count: u32,
+    joint_palette_count: u32,
+    vertex_buffer_size: u32,
+    index_buffer_size: u32,
+
+    submesh_offset: u64,
+    submesh_len: u64,
+    draw_batch_offset: u64,
+    draw_batch_len: u64,
+    joint_palette_offset: u64,
+    joint_palette_len: u64,
+    vertex_buffer_offset: u64,
+    vertex_buffer_len: u64,
+    index_buffer_offset: u64,
+    index_buffer_len: u64,
 }
 
 impl RenderVariantHeader {
-    pub const BYTE_SIZE: usize = 108;
+    const BYTE_SIZE: u64 = 20;
 
-    pub fn read(bytes: Bytes) -> AssetResult<Self> {
-        if bytes.len() < Self::BYTE_SIZE {
-            return Err(AssetError::UnexpectedEof);
-        }
-        let mut cursor = DecodeCursor::new(&bytes[..Self::BYTE_SIZE]);
-        Ok(Self {
-            render_variant_index: cursor.read_u32_le()?,
-            render_variant_flags: cursor.read_u32_le()?,
-            lod_level: cursor.read_u32_le()?,
-            screen_size: cursor.read_f32_le()?,
-            max_distance: cursor.read_f32_le()?,
-            primitive_topology: cursor.read_u32_le()?,
-            vertex_count: cursor.read_u32_le()?,
-            vertex_layout_id: cursor.read_u32_le()?,
-            vertex_attribute_mask: cursor.read_u32_le()?,
-            vertex_stride: cursor.read_u32_le()?,
-            index_count: cursor.read_u32_le()?,
-            index_format: cursor.read_u32_le()?,
-            bounds_min: read_f32x3(&mut cursor)?,
-            bounds_max: read_f32x3(&mut cursor)?,
-            bounding_sphere_center: read_f32x3(&mut cursor)?,
-            bounding_sphere_radius: cursor.read_f32_le()?,
-            submesh_count: cursor.read_u32_le()?,
-            draw_batch_count: cursor.read_u32_le()?,
-            joint_palette_count: cursor.read_u32_le()?,
-            vertex_buffer_size: cursor.read_u32_le()?,
-            index_buffer_size: cursor.read_u32_le()?,
-        })
+    async fn read<R>(reader: &R) -> AssetResult<Self>
+    where
+        R: AssetReader,
+    {
+        let mut cursor = DecodeCursor::from_reader(reader, Self::BYTE_SIZE).await?;
+        Self::new(
+            cursor.read_u32_le()?,
+            cursor.read_u32_le()?,
+            cursor.read_u32_le()?,
+            cursor.read_u32_le()?,
+            cursor.read_u32_le()?,
+        )
     }
 
-    pub fn write(&self, out: &mut EncodeBuffer) {
-        out.write_u32_le(self.render_variant_index);
-        out.write_u32_le(self.render_variant_flags);
-        out.write_u32_le(self.lod_level);
-        out.write_f32_le(self.screen_size);
-        out.write_f32_le(self.max_distance);
-        out.write_u32_le(self.primitive_topology);
-        out.write_u32_le(self.vertex_count);
-        out.write_u32_le(self.vertex_layout_id);
-        out.write_u32_le(self.vertex_attribute_mask);
-        out.write_u32_le(self.vertex_stride);
-        out.write_u32_le(self.index_count);
-        out.write_u32_le(self.index_format);
-        write_f32x3(out, self.bounds_min);
-        write_f32x3(out, self.bounds_max);
-        write_f32x3(out, self.bounding_sphere_center);
-        out.write_f32_le(self.bounding_sphere_radius);
+    fn from_builder(builder: &RenderVariantBuilder) -> AssetResult<Self> {
+        Self::new(
+            u32::try_from(builder.submeshes.len())?,
+            u32::try_from(builder.draw_batches.len())?,
+            u32::try_from(builder.joint_palette.len())?,
+            u32::try_from(builder.vertex_bytes.len())?,
+            u32::try_from(builder.index_bytes.len())?,
+        )
+    }
+
+    fn new(
+        submesh_count: u32,
+        draw_batch_count: u32,
+        joint_palette_count: u32,
+        vertex_buffer_size: u32,
+        index_buffer_size: u32,
+    ) -> AssetResult<Self> {
+        let mut header = Self {
+            submesh_count,
+            draw_batch_count,
+            joint_palette_count,
+            vertex_buffer_size,
+            index_buffer_size,
+            submesh_offset: 0,
+            submesh_len: 0,
+            draw_batch_offset: 0,
+            draw_batch_len: 0,
+            joint_palette_offset: 0,
+            joint_palette_len: 0,
+            vertex_buffer_offset: 0,
+            vertex_buffer_len: 0,
+            index_buffer_offset: 0,
+            index_buffer_len: 0,
+        };
+        header.calculate_offsets()?;
+        Ok(header)
+    }
+
+    fn write(&self, out: &mut EncodeBuffer) {
         out.write_u32_le(self.submesh_count);
         out.write_u32_le(self.draw_batch_count);
         out.write_u32_le(self.joint_palette_count);
@@ -102,37 +93,48 @@ impl RenderVariantHeader {
         out.write_u32_le(self.index_buffer_size);
     }
 
-    pub fn metadata_len(&self) -> AssetResult<usize> {
-        let mut len = Self::BYTE_SIZE;
-        len = add_array_len(len, self.submesh_count, Mesh0Submesh::BYTE_SIZE)?;
-        len = add_array_len(len, self.draw_batch_count, Mesh0DrawBatch::BYTE_SIZE)?;
-        add_array_len(
-            len,
-            self.joint_palette_count,
-            Mesh0JointPaletteEntry::BYTE_SIZE,
-        )
-    }
-
-    pub fn vertex_buffer_offset(&self) -> AssetResult<u64> {
-        Ok(u64::try_from(align_up(self.metadata_len()?, 8)?)?)
-    }
-
-    pub fn index_buffer_offset(&self) -> AssetResult<u64> {
-        let vertex_end = self
-            .vertex_buffer_offset()?
-            .checked_add(u64::from(self.vertex_buffer_size))
+    fn calculate_offsets(&mut self) -> AssetResult<()> {
+        self.submesh_offset = Self::BYTE_SIZE;
+        self.submesh_len = u64::from(self.submesh_count)
+            .checked_mul(Mesh0Submesh::BYTE_SIZE)
             .ok_or(AssetError::OffsetOverflow)?;
-        Ok(u64::try_from(align_up(usize::try_from(vertex_end)?, 8)?)?)
-    }
 
-    pub fn validate_layout(&self, section_len: u32) -> AssetResult<()> {
-        let required_len = self
-            .index_buffer_offset()?
-            .checked_add(u64::from(self.index_buffer_size))
+        self.draw_batch_offset = self
+            .submesh_offset
+            .checked_add(self.submesh_len)
             .ok_or(AssetError::OffsetOverflow)?;
-        if required_len > u64::from(section_len) {
-            return Err(AssetError::RangeOutOfBounds);
-        }
+        self.draw_batch_len = u64::from(self.draw_batch_count)
+            .checked_mul(Mesh0DrawBatch::BYTE_SIZE)
+            .ok_or(AssetError::OffsetOverflow)?;
+
+        self.joint_palette_offset = self
+            .draw_batch_offset
+            .checked_add(self.draw_batch_len)
+            .ok_or(AssetError::OffsetOverflow)?;
+        self.joint_palette_len = u64::from(self.joint_palette_count)
+            .checked_mul(Mesh0JointPaletteEntry::BYTE_SIZE)
+            .ok_or(AssetError::OffsetOverflow)?;
+
+        let metadata_end = self
+            .joint_palette_offset
+            .checked_add(self.joint_palette_len)
+            .ok_or(AssetError::OffsetOverflow)?;
+        let padded_metadata_end = metadata_end
+            .checked_add(7)
+            .ok_or(AssetError::OffsetOverflow)?;
+        self.vertex_buffer_offset = padded_metadata_end / 8 * 8;
+        self.vertex_buffer_len = u64::from(self.vertex_buffer_size);
+
+        let vertex_buffer_end = self
+            .vertex_buffer_offset
+            .checked_add(self.vertex_buffer_len)
+            .ok_or(AssetError::OffsetOverflow)?;
+        let padded_vertex_buffer_end = vertex_buffer_end
+            .checked_add(7)
+            .ok_or(AssetError::OffsetOverflow)?;
+        self.index_buffer_offset = padded_vertex_buffer_end / 8 * 8;
+        self.index_buffer_len = u64::from(self.index_buffer_size);
+
         Ok(())
     }
 }
@@ -150,14 +152,12 @@ pub struct Mesh0Submesh {
     pub center: [f32; 3],
     pub sort_center: [f32; 3],
     pub bounding_radius: f32,
-    pub source_submesh_id: u32,
-    pub source_level: u32,
 }
 
 impl Mesh0Submesh {
-    pub const BYTE_SIZE: usize = 68;
+    pub const BYTE_SIZE: u64 = 60;
 
-    pub fn read(cursor: &mut DecodeCursor<'_>) -> AssetResult<Self> {
+    pub fn read(cursor: &mut DecodeCursor) -> AssetResult<Self> {
         Ok(Self {
             submesh_id: cursor.read_u32_le()?,
             flags: cursor.read_u32_le()?,
@@ -167,11 +167,9 @@ impl Mesh0Submesh {
             joint_palette_start: cursor.read_u32_le()?,
             joint_palette_count: cursor.read_u32_le()?,
             max_bone_influence: cursor.read_u32_le()?,
-            center: read_f32x3(cursor)?,
-            sort_center: read_f32x3(cursor)?,
+            center: cursor.read_f32x3()?,
+            sort_center: cursor.read_f32x3()?,
             bounding_radius: cursor.read_f32_le()?,
-            source_submesh_id: cursor.read_u32_le()?,
-            source_level: cursor.read_u32_le()?,
         })
     }
 
@@ -184,11 +182,9 @@ impl Mesh0Submesh {
         out.write_u32_le(self.joint_palette_start);
         out.write_u32_le(self.joint_palette_count);
         out.write_u32_le(self.max_bone_influence);
-        write_f32x3(out, self.center);
-        write_f32x3(out, self.sort_center);
+        out.write_f32x3(self.center);
+        out.write_f32x3(self.sort_center);
         out.write_f32_le(self.bounding_radius);
-        out.write_u32_le(self.source_submesh_id);
-        out.write_u32_le(self.source_level);
     }
 }
 
@@ -203,17 +199,16 @@ pub struct Mesh0DrawBatch {
     pub priority: i32,
     pub index_start: u32,
     pub index_count: u32,
-    pub source_skin_batch_index: u32,
-    pub source_skin_section_index: u32,
-    pub source_geoset_index: u32,
-    pub source_material_index: u32,
-    pub source_texture_combo_index: u32,
+    pub skin_batch_index: u32,
+    pub skin_section_index: u32,
+    pub geoset_index: u32,
+    pub texture_combo_index: u32,
 }
 
 impl Mesh0DrawBatch {
-    pub const BYTE_SIZE: usize = 56;
+    pub const BYTE_SIZE: u64 = 52;
 
-    pub fn read(cursor: &mut DecodeCursor<'_>) -> AssetResult<Self> {
+    pub fn read(cursor: &mut DecodeCursor) -> AssetResult<Self> {
         Ok(Self {
             batch_id: cursor.read_u32_le()?,
             flags: cursor.read_u32_le()?,
@@ -224,11 +219,10 @@ impl Mesh0DrawBatch {
             priority: cursor.read_i32_le()?,
             index_start: cursor.read_u32_le()?,
             index_count: cursor.read_u32_le()?,
-            source_skin_batch_index: cursor.read_u32_le()?,
-            source_skin_section_index: cursor.read_u32_le()?,
-            source_geoset_index: cursor.read_u32_le()?,
-            source_material_index: cursor.read_u32_le()?,
-            source_texture_combo_index: cursor.read_u32_le()?,
+            skin_batch_index: cursor.read_u32_le()?,
+            skin_section_index: cursor.read_u32_le()?,
+            geoset_index: cursor.read_u32_le()?,
+            texture_combo_index: cursor.read_u32_le()?,
         })
     }
 
@@ -242,11 +236,10 @@ impl Mesh0DrawBatch {
         out.write_i32_le(self.priority);
         out.write_u32_le(self.index_start);
         out.write_u32_le(self.index_count);
-        out.write_u32_le(self.source_skin_batch_index);
-        out.write_u32_le(self.source_skin_section_index);
-        out.write_u32_le(self.source_geoset_index);
-        out.write_u32_le(self.source_material_index);
-        out.write_u32_le(self.source_texture_combo_index);
+        out.write_u32_le(self.skin_batch_index);
+        out.write_u32_le(self.skin_section_index);
+        out.write_u32_le(self.geoset_index);
+        out.write_u32_le(self.texture_combo_index);
     }
 }
 
@@ -259,9 +252,9 @@ pub struct Mesh0JointPaletteEntry {
 }
 
 impl Mesh0JointPaletteEntry {
-    pub const BYTE_SIZE: usize = 16;
+    pub const BYTE_SIZE: u64 = 16;
 
-    pub fn read(cursor: &mut DecodeCursor<'_>) -> AssetResult<Self> {
+    pub fn read(cursor: &mut DecodeCursor) -> AssetResult<Self> {
         Ok(Self {
             local_joint_index: cursor.read_u32_le()?,
             skeleton_joint_index: cursor.read_u32_le()?,
@@ -281,10 +274,13 @@ impl Mesh0JointPaletteEntry {
 #[derive(Clone)]
 pub struct RenderVariantReader<R>
 where
-    R: AssetRead + Clone + Send + Sync,
+    R: AssetReader,
 {
-    reader: OffsetAssetReader<R>,
-    pub header: RenderVariantHeader,
+    reader: R,
+    vertex_buffer_offset: u64,
+    index_buffer_offset: u64,
+    vertex_buffer_size: u64,
+    index_buffer_size: u64,
     pub submeshes: Vec<Mesh0Submesh>,
     pub draw_batches: Vec<Mesh0DrawBatch>,
     pub joint_palette: Vec<Mesh0JointPaletteEntry>,
@@ -292,30 +288,41 @@ where
 
 impl<R> RenderVariantReader<R>
 where
-    R: AssetRead + Clone + Send + Sync,
+    R: AssetReader,
 {
-    pub async fn read(reader: OffsetAssetReader<R>) -> AssetResult<Self> {
-        let header = RenderVariantHeader::read(
-            reader
-                .read_at(0, RenderVariantHeader::BYTE_SIZE as u64)
-                .await?,
-        )?;
+    pub const VERTEX_SIZE: usize = 48;
+    pub const INDEX_SIZE: usize = 2;
 
-        let metadata_len = u64::try_from(header.metadata_len()?)?;
-        let metadata = reader.read_at(0, metadata_len).await?;
-        let mut cursor =
-            DecodeCursor::new(&metadata[RenderVariantHeader::BYTE_SIZE..metadata_len as usize]);
-        let submeshes = read_items(&mut cursor, header.submesh_count, Mesh0Submesh::read)?;
-        let draw_batches = read_items(&mut cursor, header.draw_batch_count, Mesh0DrawBatch::read)?;
-        let joint_palette = read_items(
-            &mut cursor,
-            header.joint_palette_count,
-            Mesh0JointPaletteEntry::read,
-        )?;
+    pub async fn read(reader: R) -> AssetResult<Self> {
+        let header = RenderVariantHeader::read(&reader).await?;
 
+        let metadata_end = header
+            .joint_palette_offset
+            .checked_add(header.joint_palette_len)
+            .ok_or(AssetError::OffsetOverflow)?;
+        let metadata = reader.read_at(0, metadata_end).await?;
+        let metadata_start = usize::try_from(header.submesh_offset)?;
+        let metadata_end = usize::try_from(metadata_end)?;
+        let mut cursor = DecodeCursor::new(metadata.slice(metadata_start..metadata_end));
+
+        let mut submeshes = Vec::with_capacity(usize::try_from(header.submesh_count)?);
+        for _ in 0..header.submesh_count {
+            submeshes.push(Mesh0Submesh::read(&mut cursor)?);
+        }
+        let mut draw_batches = Vec::with_capacity(usize::try_from(header.draw_batch_count)?);
+        for _ in 0..header.draw_batch_count {
+            draw_batches.push(Mesh0DrawBatch::read(&mut cursor)?);
+        }
+        let mut joint_palette = Vec::with_capacity(usize::try_from(header.joint_palette_count)?);
+        for _ in 0..header.joint_palette_count {
+            joint_palette.push(Mesh0JointPaletteEntry::read(&mut cursor)?);
+        }
         Ok(Self {
             reader,
-            header,
+            vertex_buffer_offset: header.vertex_buffer_offset,
+            index_buffer_offset: header.index_buffer_offset,
+            vertex_buffer_size: header.vertex_buffer_len,
+            index_buffer_size: header.index_buffer_len,
             submeshes,
             draw_batches,
             joint_palette,
@@ -323,20 +330,19 @@ where
     }
 
     pub async fn index_bytes(&self) -> AssetResult<Bytes> {
-        let offset = self.header.index_buffer_offset()?;
-        let size = u64::from(self.header.index_buffer_size);
-        self.reader.read_at(offset, size).await
+        self.reader
+            .read_at(self.index_buffer_offset, self.index_buffer_size)
+            .await
     }
 
     pub async fn vertex_bytes(&self) -> AssetResult<Bytes> {
-        let offset = self.header.vertex_buffer_offset()?;
-        let size = u64::from(self.header.vertex_buffer_size);
-        self.reader.read_at(offset, size).await
+        self.reader
+            .read_at(self.vertex_buffer_offset, self.vertex_buffer_size)
+            .await
     }
 
     pub async fn read_builder(&self) -> AssetResult<RenderVariantBuilder> {
         Ok(RenderVariantBuilder {
-            header: self.header.clone(),
             submeshes: self.submeshes.clone(),
             draw_batches: self.draw_batches.clone(),
             joint_palette: self.joint_palette.clone(),
@@ -348,7 +354,6 @@ where
 
 #[derive(Debug, Clone)]
 pub struct RenderVariantBuilder {
-    pub header: RenderVariantHeader,
     pub submeshes: Vec<Mesh0Submesh>,
     pub draw_batches: Vec<Mesh0DrawBatch>,
     pub joint_palette: Vec<Mesh0JointPaletteEntry>,
@@ -358,12 +363,7 @@ pub struct RenderVariantBuilder {
 
 impl RenderVariantBuilder {
     pub fn write(&self) -> AssetResult<Bytes> {
-        let mut header = self.header.clone();
-        header.submesh_count = u32::try_from(self.submeshes.len())?;
-        header.draw_batch_count = u32::try_from(self.draw_batches.len())?;
-        header.joint_palette_count = u32::try_from(self.joint_palette.len())?;
-        header.vertex_buffer_size = u32::try_from(self.vertex_bytes.len())?;
-        header.index_buffer_size = u32::try_from(self.index_bytes.len())?;
+        let header = RenderVariantHeader::from_builder(self)?;
 
         let mut out = EncodeBuffer::new();
         header.write(&mut out);
@@ -384,144 +384,57 @@ impl RenderVariantBuilder {
     }
 
     pub fn validate(&self, _mesh_info: &MeshInfoHeader) -> AssetResult<()> {
-        if self.header.index_count == 0 {
+        let vertex_count = u32::try_from(self.vertex_bytes.len() / 48)?;
+        let index_count = u32::try_from(self.index_bytes.len() / 2)?;
+        if index_count == 0 {
             return Err(AssetError::InvalidData(
                 "empty render variant index buffer is invalid",
             ));
         }
-        if self.header.primitive_topology != primitive_topology::TRIANGLE_LIST {
-            return Err(AssetError::InvalidData("unsupported primitive topology"));
-        }
-        if self.header.vertex_count == 0 {
+        if vertex_count == 0 {
             return Err(AssetError::InvalidData(
                 "empty render variant vertex buffer is invalid",
             ));
         }
-        if self.header.vertex_stride == 0 {
-            return Err(AssetError::InvalidData(
-                "render variant vertex_stride must be greater than zero",
-            ));
-        }
-        let expected_vertex_bytes = self
-            .header
-            .vertex_count
-            .checked_mul(self.header.vertex_stride)
-            .ok_or(AssetError::OffsetOverflow)?;
-        if self.vertex_bytes.len() != expected_vertex_bytes as usize {
+        if self.vertex_bytes.len() % 48 != 0 {
             return Err(AssetError::InvalidData("invalid vertex buffer size"));
         }
-        let index_size = match self.header.index_format {
-            index_format::UINT16 => 2,
-            index_format::UINT32 => 4,
-            _ => return Err(AssetError::InvalidData("invalid index format")),
-        };
-        let expected_index_bytes = self
-            .header
-            .index_count
-            .checked_mul(index_size)
-            .ok_or(AssetError::OffsetOverflow)?;
-        if self.index_bytes.len() != expected_index_bytes as usize {
+        if self.index_bytes.len() % 2 != 0 {
             return Err(AssetError::InvalidData("invalid index buffer size"));
         }
-        if !valid_bounds(self.header.bounds_min, self.header.bounds_max) {
-            return Err(AssetError::InvalidData("invalid render variant bounds"));
-        }
-        validate_indices(
-            &self.index_bytes,
-            self.header.index_format,
-            self.header.vertex_count,
-        )?;
+        self.validate_indices(vertex_count)?;
 
         for submesh in &self.submeshes {
-            checked_range_u32(
-                submesh.index_start,
-                submesh.index_count,
-                self.header.index_count,
-            )?;
-            checked_range_u32(
+            Self::checked_range_u32(submesh.index_start, submesh.index_count, index_count)?;
+            Self::checked_range_u32(
                 submesh.joint_palette_start,
                 submesh.joint_palette_count,
-                self.joint_palette.len() as u32,
+                u32::try_from(self.joint_palette.len())?,
             )?;
         }
         for batch in &self.draw_batches {
-            checked_range_u32(
-                batch.index_start,
-                batch.index_count,
-                self.header.index_count,
-            )?;
-            if batch.submesh_index >= self.submeshes.len() as u32 {
+            Self::checked_range_u32(batch.index_start, batch.index_count, index_count)?;
+            if batch.submesh_index >= u32::try_from(self.submeshes.len())? {
                 return Err(AssetError::InvalidData("draw batch submesh out of range"));
             }
         }
         Ok(())
     }
-}
 
-fn read_f32x3(cursor: &mut DecodeCursor<'_>) -> AssetResult<[f32; 3]> {
-    Ok([
-        cursor.read_f32_le()?,
-        cursor.read_f32_le()?,
-        cursor.read_f32_le()?,
-    ])
-}
-
-fn write_f32x3(out: &mut EncodeBuffer, value: [f32; 3]) {
-    for item in value {
-        out.write_f32_le(item);
-    }
-}
-
-fn add_array_len(base: usize, count: u32, item_size: usize) -> AssetResult<usize> {
-    usize::try_from(count)?
-        .checked_mul(item_size)
-        .and_then(|size| base.checked_add(size))
-        .ok_or(AssetError::OffsetOverflow)
-}
-
-fn read_items<T>(
-    cursor: &mut DecodeCursor<'_>,
-    count: u32,
-    decode: fn(&mut DecodeCursor<'_>) -> AssetResult<T>,
-) -> AssetResult<Vec<T>> {
-    let mut items = Vec::with_capacity(usize::try_from(count)?);
-    for _ in 0..count {
-        items.push(decode(cursor)?);
-    }
-    Ok(items)
-}
-
-fn checked_range_u32(start: u32, count: u32, len: u32) -> AssetResult<()> {
-    if start.checked_add(count).filter(|end| *end <= len).is_none() {
-        return Err(AssetError::RangeOutOfBounds);
-    }
-    Ok(())
-}
-
-fn validate_indices(bytes: &Bytes, index_format: u32, vertex_count: u32) -> AssetResult<()> {
-    match index_format {
-        index_format::UINT16 => {
-            for chunk in bytes.chunks_exact(2) {
-                let index = u32::from(u16::from_le_bytes([chunk[0], chunk[1]]));
-                if index >= vertex_count {
-                    return Err(AssetError::InvalidData("index references missing vertex"));
-                }
-            }
-            Ok(())
+    fn checked_range_u32(start: u32, count: u32, len: u32) -> AssetResult<()> {
+        if start.checked_add(count).filter(|end| *end <= len).is_none() {
+            return Err(AssetError::RangeOutOfBounds);
         }
-        index_format::UINT32 => {
-            for chunk in bytes.chunks_exact(4) {
-                let index = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                if index >= vertex_count {
-                    return Err(AssetError::InvalidData("index references missing vertex"));
-                }
-            }
-            Ok(())
-        }
-        _ => Err(AssetError::InvalidData("invalid index format")),
+        Ok(())
     }
-}
 
-fn valid_bounds(min: [f32; 3], max: [f32; 3]) -> bool {
-    min[0] <= max[0] && min[1] <= max[1] && min[2] <= max[2]
+    fn validate_indices(&self, vertex_count: u32) -> AssetResult<()> {
+        for chunk in self.index_bytes.chunks_exact(2) {
+            let index = u32::from(u16::from_le_bytes([chunk[0], chunk[1]]));
+            if index >= vertex_count {
+                return Err(AssetError::InvalidData("index references missing vertex"));
+            }
+        }
+        Ok(())
+    }
 }
