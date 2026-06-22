@@ -5,8 +5,6 @@ mod style;
 
 use slotmap::{SecondaryMap, SlotMap};
 
-use crate::app::Application;
-
 pub use event::{ClickHandler, EventFlags, EventHandlers};
 pub use node::{DirtyFlags, NodeId, UiNode, UiNodeTag};
 pub use state::{
@@ -15,10 +13,10 @@ pub use state::{
 pub use style::{
     AlignItems, BackgroundStyle, BorderStyle, Color, Corners, Display, Edges, EffectStyle,
     FlexDirection, FlexStyle, JustifyContent, Length, Overflow, OverflowStyle, Position,
-    PositionStyle, SizeStyle, SpacingStyle, StyleFlags, TextStyle,
+    PositionStyle, SizeStyle, SpacingStyle, Style, StyleFlags, TextStyle,
 };
 
-pub struct UiTree<A: Application> {
+pub struct UiTree {
     nodes: SlotMap<NodeId, UiNode>,
     root: NodeId,
 
@@ -34,7 +32,7 @@ pub struct UiTree<A: Application> {
 
     pub(crate) text_content: SecondaryMap<NodeId, TextContent>,
     pub(crate) image_states: SecondaryMap<NodeId, ImageState>,
-    pub(crate) event_handlers: SecondaryMap<NodeId, EventHandlers<A>>,
+    pub(crate) event_handlers: SecondaryMap<NodeId, EventHandlers>,
     pub(crate) interaction_states: SecondaryMap<NodeId, InteractionState>,
     pub(crate) scroll_states: SecondaryMap<NodeId, ScrollState>,
     pub(crate) text_input_states: SecondaryMap<NodeId, TextInputState>,
@@ -42,7 +40,7 @@ pub struct UiTree<A: Application> {
     pub(crate) layout_rects: SecondaryMap<NodeId, LayoutRect>,
 }
 
-impl<A: Application> UiTree<A> {
+impl UiTree {
     pub fn new() -> Self {
         let mut nodes = SlotMap::with_key();
         let root = nodes.insert(UiNode::new(UiNodeTag::Root));
@@ -174,6 +172,120 @@ impl<A: Application> UiTree<A> {
         self.text_content.get(node).map(|text| text.value.as_str())
     }
 
+    pub fn apply_style(&mut self, node: NodeId, style: Style) -> bool {
+        if !self.nodes.contains_key(node) {
+            return false;
+        }
+
+        let Style {
+            size,
+            spacing,
+            flex,
+            background,
+            border,
+            text,
+            position,
+            overflow,
+            effect,
+        } = style;
+        let mut dirty = DirtyFlags::empty();
+
+        if Self::replace_group(&mut self.size_styles, node, size) {
+            dirty.insert(DirtyFlags::STYLE | DirtyFlags::LAYOUT | DirtyFlags::PAINT);
+        }
+        if Self::replace_group(&mut self.spacing_styles, node, spacing) {
+            dirty.insert(DirtyFlags::STYLE | DirtyFlags::LAYOUT | DirtyFlags::PAINT);
+        }
+        if Self::replace_group(&mut self.flex_styles, node, flex) {
+            dirty.insert(DirtyFlags::STYLE | DirtyFlags::LAYOUT | DirtyFlags::PAINT);
+        }
+        if Self::replace_group(&mut self.background_styles, node, background) {
+            dirty.insert(DirtyFlags::STYLE | DirtyFlags::PAINT);
+        }
+        if Self::replace_group(&mut self.border_styles, node, border) {
+            dirty.insert(DirtyFlags::STYLE | DirtyFlags::LAYOUT | DirtyFlags::PAINT);
+        }
+        if Self::replace_group(&mut self.text_styles, node, text) {
+            dirty.insert(DirtyFlags::STYLE | DirtyFlags::LAYOUT | DirtyFlags::PAINT);
+        }
+        if Self::replace_group(&mut self.position_styles, node, position) {
+            dirty.insert(DirtyFlags::STYLE | DirtyFlags::LAYOUT | DirtyFlags::PAINT);
+        }
+        if Self::replace_group(&mut self.overflow_styles, node, overflow) {
+            dirty.insert(DirtyFlags::STYLE | DirtyFlags::LAYOUT | DirtyFlags::PAINT);
+        }
+        if Self::replace_group(&mut self.effect_styles, node, effect) {
+            dirty.insert(DirtyFlags::STYLE | DirtyFlags::COMPOSITE);
+        }
+
+        self.refresh_style_flags(node);
+        if dirty.is_empty() {
+            return false;
+        }
+        self.mark_dirty(node, dirty);
+        true
+    }
+
+    pub fn set_width(&mut self, node: NodeId, value: impl Into<Length>) -> bool {
+        self.update_size_style(node, |style| {
+            Self::replace_if_changed(&mut style.width, value.into())
+        })
+    }
+
+    pub fn set_height(&mut self, node: NodeId, value: impl Into<Length>) -> bool {
+        self.update_size_style(node, |style| {
+            Self::replace_if_changed(&mut style.height, value.into())
+        })
+    }
+
+    pub fn set_background(&mut self, node: NodeId, color: Color) -> bool {
+        if !self.nodes.contains_key(node) {
+            return false;
+        }
+        let mut group = self
+            .background_styles
+            .get(node)
+            .copied()
+            .unwrap_or_default();
+        if !Self::replace_if_changed(&mut group.color, Some(color)) {
+            return false;
+        }
+        self.background_styles.insert(node, group);
+        self.mark_style_changed(
+            node,
+            StyleFlags::BACKGROUND,
+            DirtyFlags::STYLE | DirtyFlags::PAINT,
+        );
+        true
+    }
+
+    fn update_size_style<F>(&mut self, node: NodeId, update: F) -> bool
+    where
+        F: FnOnce(&mut SizeStyle) -> bool,
+    {
+        if !self.nodes.contains_key(node) {
+            return false;
+        }
+        let mut group = self.size_styles.get(node).copied().unwrap_or_default();
+        if !update(&mut group) {
+            return false;
+        }
+        self.size_styles.insert(node, group);
+        self.mark_style_changed(
+            node,
+            StyleFlags::SIZE,
+            DirtyFlags::STYLE | DirtyFlags::LAYOUT | DirtyFlags::PAINT,
+        );
+        true
+    }
+
+    fn mark_style_changed(&mut self, node: NodeId, style_flags: StyleFlags, dirty: DirtyFlags) {
+        if let Some(node) = self.nodes.get_mut(node) {
+            node.style_flags.insert(style_flags);
+            node.dirty.insert(dirty);
+        }
+    }
+
     pub fn mark_dirty(&mut self, node: NodeId, dirty: DirtyFlags) {
         if let Some(node) = self.nodes.get_mut(node) {
             node.dirty |= dirty;
@@ -244,9 +356,69 @@ impl<A: Application> UiTree<A> {
             self.debug_node(*child, depth + 1, out);
         }
     }
+
+    fn refresh_style_flags(&mut self, node: NodeId) {
+        let mut flags = StyleFlags::empty();
+        if self.size_styles.contains_key(node) {
+            flags.insert(StyleFlags::SIZE);
+        }
+        if self.spacing_styles.contains_key(node) {
+            flags.insert(StyleFlags::SPACING);
+        }
+        if self.flex_styles.contains_key(node) {
+            flags.insert(StyleFlags::FLEX);
+        }
+        if self.background_styles.contains_key(node) {
+            flags.insert(StyleFlags::BACKGROUND);
+        }
+        if self.border_styles.contains_key(node) {
+            flags.insert(StyleFlags::BORDER);
+        }
+        if self.text_styles.contains_key(node) {
+            flags.insert(StyleFlags::TEXT);
+        }
+        if self.position_styles.contains_key(node) {
+            flags.insert(StyleFlags::POSITION);
+        }
+        if self.overflow_styles.contains_key(node) {
+            flags.insert(StyleFlags::OVERFLOW);
+        }
+        if self.effect_styles.contains_key(node) {
+            flags.insert(StyleFlags::EFFECT);
+        }
+        if let Some(node) = self.nodes.get_mut(node) {
+            node.style_flags = flags;
+        }
+    }
+
+    fn replace_group<T: PartialEq>(
+        map: &mut SecondaryMap<NodeId, T>,
+        node: NodeId,
+        value: Option<T>,
+    ) -> bool {
+        match value {
+            Some(value) => {
+                if map.get(node) == Some(&value) {
+                    false
+                } else {
+                    map.insert(node, value);
+                    true
+                }
+            }
+            None => map.remove(node).is_some(),
+        }
+    }
+
+    fn replace_if_changed<T: PartialEq>(target: &mut T, value: T) -> bool {
+        if *target == value {
+            return false;
+        }
+        *target = value;
+        true
+    }
 }
 
-impl<A: Application> Default for UiTree<A> {
+impl Default for UiTree {
     fn default() -> Self {
         Self::new()
     }
@@ -255,14 +427,9 @@ impl<A: Application> Default for UiTree<A> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    struct TestApp;
-
-    impl Application for TestApp {}
-
     #[test]
     fn new_tree_has_root() {
-        let tree = UiTree::<TestApp>::new();
+        let tree = UiTree::new();
         let root = tree.root();
 
         assert_eq!(tree.node(root).map(|node| node.tag), Some(UiNodeTag::Root));
@@ -272,7 +439,7 @@ mod tests {
 
     #[test]
     fn append_child_sets_parent_and_children() {
-        let mut tree = UiTree::<TestApp>::new();
+        let mut tree = UiTree::new();
         let div = tree.create_node(UiNodeTag::Div);
 
         tree.append_child(tree.root(), div);
@@ -283,7 +450,7 @@ mod tests {
 
     #[test]
     fn append_child_moves_from_old_parent() {
-        let mut tree = UiTree::<TestApp>::new();
+        let mut tree = UiTree::new();
         let old_parent = tree.create_node(UiNodeTag::Div);
         let new_parent = tree.create_node(UiNodeTag::Div);
         let child = tree.create_node(UiNodeTag::Span);
@@ -300,7 +467,7 @@ mod tests {
 
     #[test]
     fn insert_child_before_orders_children() {
-        let mut tree = UiTree::<TestApp>::new();
+        let mut tree = UiTree::new();
         let parent = tree.create_node(UiNodeTag::Div);
         let first = tree.create_node(UiNodeTag::Span);
         let second = tree.create_node(UiNodeTag::Button);
@@ -314,7 +481,7 @@ mod tests {
 
     #[test]
     fn remove_subtree_cleans_side_tables() {
-        let mut tree = UiTree::<TestApp>::new();
+        let mut tree = UiTree::new();
         let parent = tree.create_node(UiNodeTag::Div);
         let text = tree.create_node(UiNodeTag::Text);
         tree.append_child(tree.root(), parent);
@@ -335,7 +502,7 @@ mod tests {
 
     #[test]
     fn set_text_marks_text_layout_paint_dirty() {
-        let mut tree = UiTree::<TestApp>::new();
+        let mut tree = UiTree::new();
         let text = tree.create_node(UiNodeTag::Text);
         tree.clear_dirty();
 
@@ -352,7 +519,7 @@ mod tests {
 
     #[test]
     fn mark_dirty_sets_flags_on_node() {
-        let mut tree = UiTree::<TestApp>::new();
+        let mut tree = UiTree::new();
         let div = tree.create_node(UiNodeTag::Div);
         tree.clear_dirty();
 
@@ -366,7 +533,7 @@ mod tests {
 
     #[test]
     fn debug_dump_outputs_stable_web_like_tree() {
-        let mut tree = UiTree::<TestApp>::new();
+        let mut tree = UiTree::new();
         let div = tree.create_node(UiNodeTag::Div);
         let button = tree.create_node(UiNodeTag::Button);
         let text = tree.create_node(UiNodeTag::Text);

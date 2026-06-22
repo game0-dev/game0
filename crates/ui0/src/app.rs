@@ -4,7 +4,7 @@ mod async_runtime;
 mod context;
 mod runtime;
 
-pub use context::{AppCx, WindowCx};
+pub use context::{AppCx, EventCx, WindowCx};
 pub use runtime::{run, run_with, AppEvent, AppHandle, AppOptions, TaskOptions};
 
 pub trait Application: Sized + 'static {

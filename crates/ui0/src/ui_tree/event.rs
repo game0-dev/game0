@@ -1,4 +1,4 @@
-use crate::app::{Application, WindowCx};
+use crate::app::EventCx;
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -15,14 +15,9 @@ bitflags::bitflags! {
     }
 }
 
-pub type ClickHandler<A> = Box<dyn FnMut(&mut WindowCx<A>)>;
+pub type ClickHandler = Box<dyn for<'a> FnMut(&mut EventCx<'a>)>;
 
-pub struct EventHandlers<A: Application> {
-    pub click: Option<ClickHandler<A>>,
-}
-
-impl<A: Application> Default for EventHandlers<A> {
-    fn default() -> Self {
-        Self { click: None }
-    }
+#[derive(Default)]
+pub struct EventHandlers {
+    pub click: Option<ClickHandler>,
 }

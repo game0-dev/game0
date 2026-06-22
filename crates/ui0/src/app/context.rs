@@ -1,9 +1,11 @@
 use std::future::Future;
+use std::marker::PhantomData;
 
 use winit::event_loop::ActiveEventLoop;
 
 use super::runtime::{AppHandle, RuntimeState};
 use super::Application;
+use crate::element::IntoElement;
 use crate::window::{WindowDesc, WindowHandle, WindowId};
 
 pub struct AppCx<'a, A: Application> {
@@ -99,6 +101,17 @@ impl<'a, A: Application> WindowCx<'a, A> {
         self.state.request_redraw(self.window);
     }
 
+    pub fn mount<E>(&mut self, view: E)
+    where
+        E: IntoElement,
+    {
+        let Some(runtime) = self.state.windows.get_mut(self.window) else {
+            return;
+        };
+        runtime.mount(view.into_element());
+        self.state.request_redraw(self.window);
+    }
+
     pub fn set_title(&mut self, title: &str) {
         if let Some(window) = self.state.windows.get(self.window) {
             window.window.set_title(title);
@@ -110,5 +123,16 @@ impl<'a, A: Application> WindowCx<'a, A> {
         if self.state.windows.is_empty() {
             self.event_loop.exit();
         }
+    }
+}
+
+pub struct EventCx<'a> {
+    pub(crate) window: WindowId,
+    pub(crate) _marker: PhantomData<&'a mut ()>,
+}
+
+impl<'a> EventCx<'a> {
+    pub fn id(&self) -> WindowId {
+        self.window
     }
 }
