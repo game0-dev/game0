@@ -143,30 +143,40 @@ impl RenderVariantHeader {
 pub struct Mesh0Submesh {
     pub submesh_id: u32,
     pub flags: u32,
+    pub level: u32,
+    pub vertex_start: u32,
+    pub vertex_count: u32,
     pub index_start: u32,
     pub index_count: u32,
     pub material_slot: u32,
     pub joint_palette_start: u32,
     pub joint_palette_count: u32,
+    pub bone_combo_index: u32,
     pub max_bone_influence: u32,
+    pub center_bone_index: u32,
     pub center: [f32; 3],
     pub sort_center: [f32; 3],
     pub bounding_radius: f32,
 }
 
 impl Mesh0Submesh {
-    pub const BYTE_SIZE: u64 = 60;
+    pub const BYTE_SIZE: u64 = 80;
 
     pub fn read(cursor: &mut DecodeCursor) -> AssetResult<Self> {
         Ok(Self {
             submesh_id: cursor.read_u32_le()?,
             flags: cursor.read_u32_le()?,
+            level: cursor.read_u32_le()?,
+            vertex_start: cursor.read_u32_le()?,
+            vertex_count: cursor.read_u32_le()?,
             index_start: cursor.read_u32_le()?,
             index_count: cursor.read_u32_le()?,
             material_slot: cursor.read_u32_le()?,
             joint_palette_start: cursor.read_u32_le()?,
             joint_palette_count: cursor.read_u32_le()?,
+            bone_combo_index: cursor.read_u32_le()?,
             max_bone_influence: cursor.read_u32_le()?,
+            center_bone_index: cursor.read_u32_le()?,
             center: cursor.read_f32x3()?,
             sort_center: cursor.read_f32x3()?,
             bounding_radius: cursor.read_f32_le()?,
@@ -176,12 +186,17 @@ impl Mesh0Submesh {
     pub fn write(&self, out: &mut EncodeBuffer) {
         out.write_u32_le(self.submesh_id);
         out.write_u32_le(self.flags);
+        out.write_u32_le(self.level);
+        out.write_u32_le(self.vertex_start);
+        out.write_u32_le(self.vertex_count);
         out.write_u32_le(self.index_start);
         out.write_u32_le(self.index_count);
         out.write_u32_le(self.material_slot);
         out.write_u32_le(self.joint_palette_start);
         out.write_u32_le(self.joint_palette_count);
+        out.write_u32_le(self.bone_combo_index);
         out.write_u32_le(self.max_bone_influence);
+        out.write_u32_le(self.center_bone_index);
         out.write_f32x3(self.center);
         out.write_f32x3(self.sort_center);
         out.write_f32_le(self.bounding_radius);
@@ -202,11 +217,17 @@ pub struct Mesh0DrawBatch {
     pub skin_batch_index: u32,
     pub skin_section_index: u32,
     pub geoset_index: u32,
+    pub color_index: u32,
+    pub material_layer: u32,
+    pub texture_count: u32,
     pub texture_combo_index: u32,
+    pub texture_coord_combo_index: u32,
+    pub texture_weight_combo_index: u32,
+    pub texture_transform_combo_index: u32,
 }
 
 impl Mesh0DrawBatch {
-    pub const BYTE_SIZE: u64 = 52;
+    pub const BYTE_SIZE: u64 = 76;
 
     pub fn read(cursor: &mut DecodeCursor) -> AssetResult<Self> {
         Ok(Self {
@@ -222,7 +243,13 @@ impl Mesh0DrawBatch {
             skin_batch_index: cursor.read_u32_le()?,
             skin_section_index: cursor.read_u32_le()?,
             geoset_index: cursor.read_u32_le()?,
+            color_index: cursor.read_u32_le()?,
+            material_layer: cursor.read_u32_le()?,
+            texture_count: cursor.read_u32_le()?,
             texture_combo_index: cursor.read_u32_le()?,
+            texture_coord_combo_index: cursor.read_u32_le()?,
+            texture_weight_combo_index: cursor.read_u32_le()?,
+            texture_transform_combo_index: cursor.read_u32_le()?,
         })
     }
 
@@ -239,7 +266,13 @@ impl Mesh0DrawBatch {
         out.write_u32_le(self.skin_batch_index);
         out.write_u32_le(self.skin_section_index);
         out.write_u32_le(self.geoset_index);
+        out.write_u32_le(self.color_index);
+        out.write_u32_le(self.material_layer);
+        out.write_u32_le(self.texture_count);
         out.write_u32_le(self.texture_combo_index);
+        out.write_u32_le(self.texture_coord_combo_index);
+        out.write_u32_le(self.texture_weight_combo_index);
+        out.write_u32_le(self.texture_transform_combo_index);
     }
 }
 

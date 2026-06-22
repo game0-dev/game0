@@ -67,8 +67,8 @@ RENDER_VARIANT section body
 │  ├─ vertex_buffer_size: u32
 │  └─ index_buffer_size: u32
 │
-├─ Mesh0Submesh[]                      68 bytes each
-├─ Mesh0DrawBatch[]                    56 bytes each
+├─ Mesh0Submesh[]                      80 bytes each
+├─ Mesh0DrawBatch[]                    76 bytes each
 ├─ Mesh0JointPaletteEntry[]            16 bytes each
 ├─ padding                             zero bytes, aligned to 8
 ├─ vertex bytes
