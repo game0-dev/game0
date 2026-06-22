@@ -10,6 +10,7 @@ use winit::window::{Window, WindowId as WinitWindowId};
 
 use super::async_runtime::AsyncRuntime;
 use super::{AppCx, Application, WindowCx};
+use crate::ui_tree::UiTree;
 use crate::window::{WindowDesc, WindowHandle, WindowId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,7 +134,7 @@ struct AppRuntime<A: Application> {
 pub(crate) struct RuntimeState<A: Application> {
     pub(crate) proxy: EventLoopProxy<RuntimeMsg<A>>,
     pub(crate) async_runtime: AsyncRuntime<A>,
-    pub(crate) windows: SlotMap<WindowId, WindowRuntime>,
+    pub(crate) windows: SlotMap<WindowId, WindowRuntime<A>>,
     pub(crate) winit_to_ui0: HashMap<WinitWindowId, WindowId>,
     pub(crate) running: bool,
 }
@@ -327,19 +328,32 @@ impl<A: Application> AppRuntime<A> {
     }
 }
 
-pub(crate) struct WindowRuntime {
+pub(crate) struct WindowRuntime<A: Application> {
     #[allow(dead_code)]
     pub(crate) id: WindowId,
     pub(crate) window: Arc<Window>,
+    #[allow(dead_code)]
+    tree: UiTree<A>,
     pub(crate) redraw_requested: bool,
 }
 
-impl WindowRuntime {
+impl<A: Application> WindowRuntime<A> {
     fn new(id: WindowId, window: Arc<Window>) -> Self {
         Self {
             id,
             window,
+            tree: UiTree::new(),
             redraw_requested: false,
         }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn tree(&self) -> &UiTree<A> {
+        &self.tree
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn tree_mut(&mut self) -> &mut UiTree<A> {
+        &mut self.tree
     }
 }

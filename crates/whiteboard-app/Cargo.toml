@@ -1,8 +1,0 @@
-[package]
-name = "whiteboard-app"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-greact = { path = "../greact" }
-whiteboard-core = { path = "../whiteboard-core" }

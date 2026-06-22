@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 anyhow.workspace = true
+bitflags.workspace = true
 slotmap.workspace = true
+smallvec.workspace = true
 tokio.workspace = true
 winit.workspace = true
 
