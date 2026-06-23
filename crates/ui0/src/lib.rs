@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod element;
+pub mod reactive;
 pub mod ui_tree;
 pub mod window;
 
@@ -15,7 +16,11 @@ pub use app::{
     run, run_with, AppCx, AppEvent, AppHandle, AppOptions, Application, EventCx, TaskOptions,
     WindowCx,
 };
-pub use element::{button, div, img, span, text, Element, IntoElement};
+pub use element::{button, div, img, span, text, Element, IntoChild, IntoElement};
+pub use reactive::{
+    batch, effect, for_each, memo, show, signal, untrack, EffectHandle, ForEachBuilder,
+    ForEachElement, Memo, ShowBuilder, ShowElement, Signal,
+};
 pub use ui_tree::{
     AlignItems, BackgroundStyle, BorderStyle, Color, Corners, DirtyFlags, Display, Edges,
     EffectStyle, EventFlags, EventHandlers, FlexDirection, FlexStyle, ImageSource, ImageState,

@@ -10,7 +10,8 @@ use winit::window::{Window, WindowId as WinitWindowId};
 
 use super::async_runtime::AsyncRuntime;
 use super::{AppCx, Application, WindowCx};
-use crate::element::{mount_element, Element, MountedRegion};
+use crate::element::{mount_element, MountedRegion};
+use crate::reactive::ReactiveRuntime;
 use crate::ui_tree::UiTree;
 use crate::window::{WindowDesc, WindowHandle, WindowId};
 
@@ -196,8 +197,26 @@ impl<A: Application> RuntimeState<A> {
         let Some(runtime) = self.windows.remove(window) else {
             return false;
         };
-        self.winit_to_ui0.remove(&runtime.window.id());
+        let winit_id = runtime.window.id();
+        runtime.dispose();
+        self.winit_to_ui0.remove(&winit_id);
         true
+    }
+
+    pub(crate) fn flush_reactive(&mut self, window: WindowId) {
+        let Some(runtime) = self.windows.get_mut(window) else {
+            return;
+        };
+        if runtime.flush_reactive() {
+            self.request_redraw(window);
+        }
+    }
+
+    pub(crate) fn flush_all_reactive(&mut self) {
+        let windows = self.windows.keys().collect::<Vec<_>>();
+        for window in windows {
+            self.flush_reactive(window);
+        }
     }
 }
 
@@ -230,6 +249,7 @@ impl<A: Application> ApplicationHandler<RuntimeMsg<A>> for AppRuntime<A> {
                     event_loop,
                 };
                 task(&mut self.app, &mut cx);
+                self.state.flush_all_reactive();
             }
             RuntimeMsg::RunWindow { window, task } => {
                 if self.state.windows.contains_key(window) {
@@ -239,6 +259,7 @@ impl<A: Application> ApplicationHandler<RuntimeMsg<A>> for AppRuntime<A> {
                         window,
                     };
                     task(&mut self.app, &mut cx);
+                    self.state.flush_reactive(window);
                 }
             }
             RuntimeMsg::RequestRedraw(window) => {
@@ -317,6 +338,7 @@ impl<A: Application> AppRuntime<A> {
             event_loop,
         };
         self.app.handle_event(&mut cx, event);
+        self.state.flush_all_reactive();
     }
 
     fn close_window(&mut self, event_loop: &ActiveEventLoop, window: WindowId) {
@@ -336,6 +358,7 @@ pub(crate) struct WindowRuntime {
     #[allow(dead_code)]
     tree: UiTree,
     root_region: MountedRegion,
+    reactive: ReactiveRuntime,
     pub(crate) redraw_requested: bool,
 }
 
@@ -348,6 +371,7 @@ impl WindowRuntime {
             window,
             tree,
             root_region,
+            reactive: ReactiveRuntime::new(),
             redraw_requested: false,
         }
     }
@@ -362,7 +386,35 @@ impl WindowRuntime {
         &mut self.tree
     }
 
-    pub(crate) fn mount(&mut self, element: Element) {
-        mount_element(&mut self.tree, &mut self.root_region, element);
+    pub(crate) fn mount<F, E>(&mut self, build: F)
+    where
+        F: FnOnce() -> E + 'static,
+        E: crate::element::IntoElement,
+    {
+        self.reactive.dispose_all();
+        for node in std::mem::take(&mut self.root_region.nodes) {
+            self.tree.remove_subtree(node);
+        }
+        self.reactive = ReactiveRuntime::new();
+        self.root_region = MountedRegion::new(self.tree.root());
+        let root = self.reactive.root_owner();
+        self.reactive.enter(root, || {
+            let element = build().into_element();
+            mount_element(
+                &mut self.tree,
+                &self.reactive,
+                &mut self.root_region,
+                element,
+            );
+        });
+        self.flush_reactive();
+    }
+
+    pub(crate) fn flush_reactive(&mut self) -> bool {
+        self.reactive.flush(&mut self.tree)
+    }
+
+    pub(crate) fn dispose(self) {
+        self.reactive.dispose_all();
     }
 }

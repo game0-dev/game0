@@ -101,14 +101,15 @@ impl<'a, A: Application> WindowCx<'a, A> {
         self.state.request_redraw(self.window);
     }
 
-    pub fn mount<E>(&mut self, view: E)
+    pub fn mount<F, E>(&mut self, build: F)
     where
+        F: FnOnce() -> E + 'static,
         E: IntoElement,
     {
         let Some(runtime) = self.state.windows.get_mut(self.window) else {
             return;
         };
-        runtime.mount(view.into_element());
+        runtime.mount(build);
         self.state.request_redraw(self.window);
     }
 
