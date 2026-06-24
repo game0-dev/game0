@@ -30,12 +30,16 @@ pub struct SpacingStyle {
     pub gap: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlexStyle {
     pub display: Display,
     pub direction: FlexDirection,
     pub align_items: AlignItems,
     pub justify_content: JustifyContent,
+    pub align_self: Option<AlignItems>,
+    pub flex_grow: f32,
+    pub flex_shrink: f32,
+    pub flex_basis: Length,
 }
 
 impl Default for FlexStyle {
@@ -45,6 +49,10 @@ impl Default for FlexStyle {
             direction: FlexDirection::Row,
             align_items: AlignItems::Stretch,
             justify_content: JustifyContent::Start,
+            align_self: None,
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            flex_basis: Length::Auto,
         }
     }
 }
@@ -68,15 +76,17 @@ pub struct TextStyle {
     pub font_family: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PositionStyle {
     pub position: Position,
+    pub inset: Edges<Length>,
 }
 
 impl Default for PositionStyle {
     fn default() -> Self {
         Self {
             position: Position::Relative,
+            inset: Edges::all(Length::Auto),
         }
     }
 }
@@ -188,8 +198,28 @@ impl Style {
         self
     }
 
+    pub fn align_self(mut self, value: AlignItems) -> Self {
+        self.flex.get_or_insert_default().align_self = Some(value);
+        self
+    }
+
     pub fn justify_content(mut self, value: JustifyContent) -> Self {
         self.flex.get_or_insert_default().justify_content = value;
+        self
+    }
+
+    pub fn flex_grow(mut self, value: f32) -> Self {
+        self.flex.get_or_insert_default().flex_grow = value;
+        self
+    }
+
+    pub fn flex_shrink(mut self, value: f32) -> Self {
+        self.flex.get_or_insert_default().flex_shrink = value;
+        self
+    }
+
+    pub fn flex_basis(mut self, value: impl Into<Length>) -> Self {
+        self.flex.get_or_insert_default().flex_basis = value.into();
         self
     }
 
@@ -235,6 +265,26 @@ impl Style {
 
     pub fn relative(mut self) -> Self {
         self.position.get_or_insert_default().position = Position::Relative;
+        self
+    }
+
+    pub fn left(mut self, value: impl Into<Length>) -> Self {
+        self.position.get_or_insert_default().inset.left = value.into();
+        self
+    }
+
+    pub fn right(mut self, value: impl Into<Length>) -> Self {
+        self.position.get_or_insert_default().inset.right = value.into();
+        self
+    }
+
+    pub fn top(mut self, value: impl Into<Length>) -> Self {
+        self.position.get_or_insert_default().inset.top = value.into();
+        self
+    }
+
+    pub fn bottom(mut self, value: impl Into<Length>) -> Self {
+        self.position.get_or_insert_default().inset.bottom = value.into();
         self
     }
 
@@ -284,15 +334,15 @@ impl Style {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct Edges {
-    pub left: f32,
-    pub right: f32,
-    pub top: f32,
-    pub bottom: f32,
+pub struct Edges<T = f32> {
+    pub left: T,
+    pub right: T,
+    pub top: T,
+    pub bottom: T,
 }
 
-impl Edges {
-    pub fn all(value: f32) -> Self {
+impl<T: Copy> Edges<T> {
+    pub fn all(value: T) -> Self {
         Self {
             left: value,
             right: value,

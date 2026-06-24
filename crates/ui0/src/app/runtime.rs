@@ -292,6 +292,11 @@ impl<A: Application> ApplicationHandler<RuntimeMsg<A>> for AppRuntime<A> {
                 self.close_window(event_loop, window);
             }
             WindowEvent::Resized(size) => {
+                if let Some(runtime) = self.state.windows.get_mut(window) {
+                    if runtime.resize(size.width, size.height) {
+                        self.state.request_redraw(window);
+                    }
+                }
                 self.emit_app_event(
                     event_loop,
                     AppEvent::WindowResized {
@@ -359,6 +364,8 @@ pub(crate) struct WindowRuntime {
     tree: UiTree,
     root_region: MountedRegion,
     reactive: ReactiveRuntime,
+    viewport_width: f32,
+    viewport_height: f32,
     pub(crate) redraw_requested: bool,
 }
 
@@ -366,12 +373,15 @@ impl WindowRuntime {
     fn new(id: WindowId, window: Arc<Window>) -> Self {
         let tree = UiTree::new();
         let root_region = MountedRegion::new(tree.root());
+        let size = window.inner_size();
         Self {
             id,
             window,
             tree,
             root_region,
             reactive: ReactiveRuntime::new(),
+            viewport_width: size.width as f32,
+            viewport_height: size.height as f32,
             redraw_requested: false,
         }
     }
@@ -411,10 +421,23 @@ impl WindowRuntime {
     }
 
     pub(crate) fn flush_reactive(&mut self) -> bool {
-        self.reactive.flush(&mut self.tree)
+        let reactive_changed = self.reactive.flush(&mut self.tree);
+        let layout_changed = self.layout();
+        reactive_changed || layout_changed
+    }
+
+    pub(crate) fn resize(&mut self, width: u32, height: u32) -> bool {
+        self.viewport_width = width as f32;
+        self.viewport_height = height as f32;
+        self.layout()
     }
 
     pub(crate) fn dispose(self) {
         self.reactive.dispose_all();
+    }
+
+    fn layout(&mut self) -> bool {
+        self.tree
+            .compute_layout(self.viewport_width, self.viewport_height)
     }
 }

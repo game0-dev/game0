@@ -304,8 +304,28 @@ impl Element {
         self
     }
 
+    pub fn align_self(mut self, value: AlignItems) -> Self {
+        self.style = self.style.align_self(value);
+        self
+    }
+
     pub fn justify_content(mut self, value: JustifyContent) -> Self {
         self.style = self.style.justify_content(value);
+        self
+    }
+
+    pub fn flex_grow(mut self, value: f32) -> Self {
+        self.style = self.style.flex_grow(value);
+        self
+    }
+
+    pub fn flex_shrink(mut self, value: f32) -> Self {
+        self.style = self.style.flex_shrink(value);
+        self
+    }
+
+    pub fn flex_basis(mut self, value: impl Into<Length>) -> Self {
+        self.style = self.style.flex_basis(value);
         self
     }
 
@@ -373,6 +393,26 @@ impl Element {
 
     pub fn relative(mut self) -> Self {
         self.style = self.style.relative();
+        self
+    }
+
+    pub fn left(mut self, value: impl Into<Length>) -> Self {
+        self.style = self.style.left(value);
+        self
+    }
+
+    pub fn right(mut self, value: impl Into<Length>) -> Self {
+        self.style = self.style.right(value);
+        self
+    }
+
+    pub fn top(mut self, value: impl Into<Length>) -> Self {
+        self.style = self.style.top(value);
+        self
+    }
+
+    pub fn bottom(mut self, value: impl Into<Length>) -> Self {
+        self.style = self.style.bottom(value);
         self
     }
 

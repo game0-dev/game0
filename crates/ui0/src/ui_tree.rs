@@ -1,4 +1,5 @@
 mod event;
+mod layout;
 mod node;
 mod state;
 mod style;
@@ -6,6 +7,7 @@ mod style;
 use slotmap::{SecondaryMap, SlotMap};
 
 pub use event::{ClickHandler, EventFlags, EventHandlers};
+pub(crate) use layout::LayoutNodeState;
 pub use node::{DirtyFlags, NodeId, UiNode, UiNodeTag};
 pub use state::{
     ImageSource, ImageState, InteractionState, LayoutRect, ScrollState, TextContent, TextInputState,
@@ -37,14 +39,14 @@ pub struct UiTree {
     pub(crate) scroll_states: SecondaryMap<NodeId, ScrollState>,
     pub(crate) text_input_states: SecondaryMap<NodeId, TextInputState>,
 
-    pub(crate) layout_rects: SecondaryMap<NodeId, LayoutRect>,
+    pub(crate) layout_states: SecondaryMap<NodeId, LayoutNodeState>,
 }
 
 impl UiTree {
     pub fn new() -> Self {
         let mut nodes = SlotMap::with_key();
         let root = nodes.insert(UiNode::new(UiNodeTag::Root));
-        Self {
+        let mut tree = Self {
             nodes,
             root,
             size_styles: SecondaryMap::new(),
@@ -62,8 +64,10 @@ impl UiTree {
             interaction_states: SecondaryMap::new(),
             scroll_states: SecondaryMap::new(),
             text_input_states: SecondaryMap::new(),
-            layout_rects: SecondaryMap::new(),
-        }
+            layout_states: SecondaryMap::new(),
+        };
+        tree.initialize_layout_node(root);
+        tree
     }
 
     pub fn root(&self) -> NodeId {
@@ -71,7 +75,9 @@ impl UiTree {
     }
 
     pub fn create_node(&mut self, tag: UiNodeTag) -> NodeId {
-        self.nodes.insert(UiNode::new(tag))
+        let node = self.nodes.insert(UiNode::new(tag));
+        self.initialize_layout_node(node);
+        node
     }
 
     pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
@@ -95,6 +101,7 @@ impl UiTree {
                 .unwrap_or(parent_node.children.len());
             parent_node.children.insert(insert_at, child);
         }
+        self.sync_layout_children_from_structure_parent(parent);
         self.mark_dirty(
             parent,
             DirtyFlags::STRUCTURE | DirtyFlags::LAYOUT | DirtyFlags::PAINT,
@@ -118,6 +125,7 @@ impl UiTree {
         if let Some(node) = self.nodes.get_mut(node) {
             node.parent = None;
         }
+        self.sync_layout_children_from_structure_parent(parent);
         self.mark_dirty(
             parent,
             DirtyFlags::STRUCTURE | DirtyFlags::LAYOUT | DirtyFlags::PAINT,
@@ -153,6 +161,10 @@ impl UiTree {
             .get(node)
             .map(|node| node.children.as_slice())
             .unwrap_or(&[])
+    }
+
+    pub fn layout_rect(&self, node: NodeId) -> Option<LayoutRect> {
+        self.layout_states.get(node).map(|state| state.rect)
     }
 
     pub fn set_text(&mut self, node: NodeId, value: impl Into<String>) -> bool {
@@ -222,6 +234,9 @@ impl UiTree {
         if dirty.is_empty() {
             return false;
         }
+        if dirty.contains(DirtyFlags::STYLE) {
+            self.sync_layout_style(node);
+        }
         self.mark_dirty(node, dirty);
         true
     }
@@ -282,13 +297,19 @@ impl UiTree {
     fn mark_style_changed(&mut self, node: NodeId, style_flags: StyleFlags, dirty: DirtyFlags) {
         if let Some(node) = self.nodes.get_mut(node) {
             node.style_flags.insert(style_flags);
-            node.dirty.insert(dirty);
         }
+        if dirty.contains(DirtyFlags::STYLE) {
+            self.sync_layout_style(node);
+        }
+        self.mark_dirty(node, dirty);
     }
 
     pub fn mark_dirty(&mut self, node: NodeId, dirty: DirtyFlags) {
         if let Some(node) = self.nodes.get_mut(node) {
             node.dirty |= dirty;
+        }
+        if dirty.contains(DirtyFlags::LAYOUT) {
+            self.invalidate_layout_from(node);
         }
     }
 
@@ -335,7 +356,7 @@ impl UiTree {
         self.interaction_states.remove(node);
         self.scroll_states.remove(node);
         self.text_input_states.remove(node);
-        self.layout_rects.remove(node);
+        self.layout_states.remove(node);
     }
 
     fn debug_node(&self, node: NodeId, depth: usize, out: &mut String) {
@@ -435,6 +456,7 @@ mod tests {
         assert_eq!(tree.node(root).map(|node| node.tag), Some(UiNodeTag::Root));
         assert_eq!(tree.node(root).unwrap().parent, None);
         assert!(tree.children(root).is_empty());
+        assert!(tree.layout_states.contains_key(root));
     }
 
     #[test]
@@ -446,6 +468,15 @@ mod tests {
 
         assert_eq!(tree.node(div).unwrap().parent, Some(tree.root()));
         assert_eq!(tree.children(tree.root()), &[div]);
+        assert_eq!(tree.layout_states[tree.root()].children, vec![div]);
+    }
+
+    #[test]
+    fn fragment_does_not_create_layout_state() {
+        let mut tree = UiTree::new();
+        let fragment = tree.create_node(UiNodeTag::Fragment);
+
+        assert!(!tree.layout_states.contains_key(fragment));
     }
 
     #[test]
@@ -488,7 +519,7 @@ mod tests {
         tree.append_child(parent, text);
         tree.set_text(text, "Save");
         tree.size_styles.insert(parent, SizeStyle::default());
-        tree.layout_rects.insert(text, LayoutRect::default());
+        tree.layout_states.insert(text, LayoutNodeState::default());
 
         tree.remove_subtree(parent);
 
@@ -496,8 +527,101 @@ mod tests {
         assert!(tree.node(text).is_none());
         assert!(tree.text_content.get(text).is_none());
         assert!(tree.size_styles.get(parent).is_none());
-        assert!(tree.layout_rects.get(text).is_none());
+        assert!(tree.layout_states.get(text).is_none());
         assert!(tree.children(tree.root()).is_empty());
+    }
+
+    #[test]
+    fn compute_layout_writes_fixed_rects() {
+        let mut tree = UiTree::new();
+        let div = tree.create_node(UiNodeTag::Div);
+        tree.append_child(tree.root(), div);
+        tree.apply_style(div, Style::new().w(100.0).h(50.0));
+
+        assert!(tree.compute_layout(800.0, 600.0));
+
+        assert_eq!(
+            tree.layout_rect(div),
+            Some(LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 50.0,
+            })
+        );
+    }
+
+    #[test]
+    fn compute_layout_handles_flex_row() {
+        let mut tree = UiTree::new();
+        let parent = tree.create_node(UiNodeTag::Div);
+        let first = tree.create_node(UiNodeTag::Div);
+        let second = tree.create_node(UiNodeTag::Div);
+        tree.append_child(tree.root(), parent);
+        tree.append_child(parent, first);
+        tree.append_child(parent, second);
+        tree.apply_style(parent, Style::new().row().w(200.0).h(40.0));
+        tree.apply_style(first, Style::new().w(80.0).h(20.0));
+        tree.apply_style(second, Style::new().w(60.0).h(20.0));
+
+        tree.compute_layout(800.0, 600.0);
+
+        assert_eq!(tree.layout_rect(first).unwrap().x, 0.0);
+        assert_eq!(tree.layout_rect(second).unwrap().x, 80.0);
+    }
+
+    #[test]
+    fn compute_layout_flattens_fragments() {
+        let mut tree = UiTree::new();
+        let parent = tree.create_node(UiNodeTag::Div);
+        let fragment = tree.create_node(UiNodeTag::Fragment);
+        let child = tree.create_node(UiNodeTag::Div);
+        tree.append_child(tree.root(), parent);
+        tree.append_child(parent, fragment);
+        tree.append_child(fragment, child);
+        tree.apply_style(parent, Style::new().row().w(100.0).h(40.0));
+        tree.apply_style(child, Style::new().w(30.0).h(20.0));
+
+        tree.compute_layout(800.0, 600.0);
+
+        assert!(tree.layout_rect(fragment).is_none());
+        assert_eq!(tree.layout_rect(child).unwrap().width, 30.0);
+    }
+
+    #[test]
+    fn layout_children_track_fragment_structure_changes() {
+        let mut tree = UiTree::new();
+        let parent = tree.create_node(UiNodeTag::Div);
+        let fragment = tree.create_node(UiNodeTag::Fragment);
+        let first = tree.create_node(UiNodeTag::Div);
+        let second = tree.create_node(UiNodeTag::Div);
+        tree.append_child(tree.root(), parent);
+        tree.append_child(parent, fragment);
+        tree.append_child(fragment, first);
+
+        assert_eq!(tree.layout_states[parent].children, vec![first]);
+
+        tree.append_child(fragment, second);
+
+        assert_eq!(tree.layout_states[parent].children, vec![first, second]);
+
+        tree.detach(first);
+
+        assert_eq!(tree.layout_states[parent].children, vec![second]);
+    }
+
+    #[test]
+    fn compute_layout_updates_after_size_change() {
+        let mut tree = UiTree::new();
+        let div = tree.create_node(UiNodeTag::Div);
+        tree.append_child(tree.root(), div);
+        tree.apply_style(div, Style::new().w(100.0).h(50.0));
+        tree.compute_layout(800.0, 600.0);
+
+        tree.set_width(div, 140.0);
+        assert!(tree.compute_layout(800.0, 600.0));
+
+        assert_eq!(tree.layout_rect(div).unwrap().width, 140.0);
     }
 
     #[test]

@@ -8,6 +8,7 @@ anyhow.workspace = true
 bitflags.workspace = true
 slotmap.workspace = true
 smallvec.workspace = true
+taffy = { version = "0.11", default-features = false, features = ["std", "flexbox", "grid", "block_layout", "content_size"] }
 tokio.workspace = true
 winit.workspace = true
 
