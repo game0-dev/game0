@@ -6,6 +6,7 @@ use winit::event_loop::ActiveEventLoop;
 use super::runtime::{AppHandle, RuntimeState};
 use super::Application;
 use crate::element::IntoElement;
+use crate::ui_tree::{EventPhase, NodeId};
 use crate::window::{WindowDesc, WindowHandle, WindowId};
 
 pub struct AppCx<'a, A: Application> {
@@ -129,11 +130,61 @@ impl<'a, A: Application> WindowCx<'a, A> {
 
 pub struct EventCx<'a> {
     pub(crate) window: WindowId,
+    pub(crate) target: NodeId,
+    pub(crate) current_target: NodeId,
+    pub(crate) phase: EventPhase,
+    pub(crate) stopped: bool,
+    pub(crate) redraw_requested: bool,
     pub(crate) _marker: PhantomData<&'a mut ()>,
 }
 
 impl<'a> EventCx<'a> {
     pub fn id(&self) -> WindowId {
         self.window
+    }
+
+    pub fn window_id(&self) -> WindowId {
+        self.window
+    }
+
+    pub fn target(&self) -> NodeId {
+        self.target
+    }
+
+    pub fn current_target(&self) -> NodeId {
+        self.current_target
+    }
+
+    pub fn phase(&self) -> EventPhase {
+        self.phase
+    }
+
+    pub fn stop_propagation(&mut self) {
+        self.stopped = true;
+    }
+
+    pub fn is_propagation_stopped(&self) -> bool {
+        self.stopped
+    }
+
+    pub fn request_redraw(&mut self) {
+        self.redraw_requested = true;
+    }
+
+    pub(crate) fn new(window: WindowId, target: NodeId, current_target: NodeId) -> Self {
+        let phase = if target == current_target {
+            EventPhase::Target
+        } else {
+            EventPhase::Bubble
+        };
+        Self {
+            window,
+            target,
+            current_target,
+            phase,
+            stopped: false,
+            redraw_requested: false,
+            _marker: PhantomData,
+        }
     }
 }

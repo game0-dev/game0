@@ -10,32 +10,37 @@ Current user-facing shape:
 button().on_click(move |cx| {
     let window = cx.id();
 });
+
+div()
+    .on_pointer_down(|cx, event| {
+        let target = cx.target();
+        let position = event.position;
+    })
+    .on_pointer_move(|cx, event| {
+        cx.stop_propagation();
+    });
 ```
 
 Current implementation status:
 
 - `Element::on_click` stores a click handler in `EventHandlers`.
-- Mounting an element with a click handler marks the node with `EventFlags::CLICK`.
-- `EventCx` currently exposes the owning `WindowId` through `id()`.
-- The runtime does not yet perform pointer hit testing, click dispatch, focus dispatch, keyboard dispatch, or event propagation.
+- `Element::on_pointer_down`, `on_pointer_up`, `on_pointer_move`, `on_pointer_enter`, and `on_pointer_leave` store typed pointer handlers.
+- Mounting an element with handlers marks the node with the corresponding `EventFlags`.
+- `UiTree::hit_test` uses the computed layout rects, reverse child order, and transparent fragments to return `HitTestResult { target, path }`.
+- The runtime tracks cursor position, pointer buttons, modifiers, hover path, and pressed target.
+- Pointer move dispatches enter/leave transitions and pointer move.
+- Pointer down/up dispatches pointer handlers; primary down/up on the same target synthesizes click.
+- Dispatch uses target-to-root bubbling and supports `stop_propagation`.
+- `EventCx` exposes `id()`, `window_id()`, `target()`, `current_target()`, `phase()`, `request_redraw()`, and propagation state.
 
-Recommended first runtime step:
+Remaining runtime gaps:
 
-- Track pointer position from `WindowEvent::CursorMoved`.
-- On pointer release, hit-test the window `UiTree` against `LayoutRect` once layout exists.
-- Invoke the nearest target node with a click handler.
-- Flush the window reactive runtime after the handler, then request redraw if anything changed.
-
-Recommended first `EventCx` additions:
-
-```rust
-cx.window_id()
-cx.request_redraw()
-cx.stop_propagation()
-cx.target()
-```
-
-`id()` can remain as a short alias for `window_id()`.
+- Focus dispatch.
+- Keyboard dispatch.
+- Scroll/wheel dispatch.
+- Pointer capture.
+- Text input editing behavior.
+- Clipping, scrolling, transforms, and z-index in hit testing.
 
 ## Input API
 
@@ -58,7 +63,7 @@ Do not create new signals inside event handlers. Signals should be created while
 
 ## Example Coverage
 
-- `reactive_counter.rs` covers `window.mount(|| ...)`, `signal`, `memo`, dynamic `text`, and intended `on_click` usage.
+- `reactive_counter.rs` covers `window.mount(|| ...)`, `signal`, `memo`, dynamic `text`, and `on_click` usage.
 - `control_flow.rs` covers `show`, `child_fn`, `for_each`, keyed row reuse, and row-local signals.
 
-The examples intentionally compile against the current API without assuming click dispatch or text input behavior is implemented.
+The examples intentionally compile against the current API without assuming text input behavior is implemented.

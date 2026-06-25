@@ -23,9 +23,10 @@ pub use reactive::{
 };
 pub use ui_tree::{
     AlignItems, BackgroundStyle, BorderStyle, Color, Corners, DirtyFlags, Display, Edges,
-    EffectStyle, EventFlags, EventHandlers, FlexDirection, FlexStyle, ImageSource, ImageState,
-    InteractionState, JustifyContent, LayoutRect, Length, NodeId, Overflow, OverflowStyle,
-    Position, PositionStyle, ScrollState, SizeStyle, SpacingStyle, Style, StyleFlags, TextContent,
-    TextInputState, TextStyle, UiNode, UiNodeTag, UiTree,
+    EffectStyle, EventFlags, EventHandlers, EventPhase, FlexDirection, FlexStyle, HitTestResult,
+    ImageSource, ImageState, InteractionState, JustifyContent, KeyModifiers, LayoutRect, Length,
+    NodeId, Overflow, OverflowStyle, Point, PointerButton, PointerButtons, PointerEvent,
+    PointerHandler, Position, PositionStyle, ScrollState, SizeStyle, SpacingStyle, Style,
+    StyleFlags, TextContent, TextInputState, TextStyle, UiNode, UiNodeTag, UiTree,
 };
 pub use window::{WindowDesc, WindowHandle, WindowId};

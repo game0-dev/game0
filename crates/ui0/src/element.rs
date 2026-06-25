@@ -6,7 +6,7 @@ use crate::reactive::{
 };
 use crate::ui_tree::{
     AlignItems, Color, DirtyFlags, EventFlags, EventHandlers, ImageSource, ImageState,
-    JustifyContent, Length, NodeId, Overflow, Style, UiNodeTag, UiTree,
+    JustifyContent, Length, NodeId, Overflow, PointerEvent, Style, UiNodeTag, UiTree,
 };
 
 pub enum Reactive<T> {
@@ -208,6 +208,46 @@ impl Element {
         F: for<'a> FnMut(&mut EventCx<'a>) + 'static,
     {
         self.events.click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_pointer_down<F>(mut self, handler: F) -> Self
+    where
+        F: for<'a> FnMut(&mut EventCx<'a>, &PointerEvent) + 'static,
+    {
+        self.events.pointer_down = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_pointer_up<F>(mut self, handler: F) -> Self
+    where
+        F: for<'a> FnMut(&mut EventCx<'a>, &PointerEvent) + 'static,
+    {
+        self.events.pointer_up = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_pointer_move<F>(mut self, handler: F) -> Self
+    where
+        F: for<'a> FnMut(&mut EventCx<'a>, &PointerEvent) + 'static,
+    {
+        self.events.pointer_move = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_pointer_enter<F>(mut self, handler: F) -> Self
+    where
+        F: for<'a> FnMut(&mut EventCx<'a>, &PointerEvent) + 'static,
+    {
+        self.events.pointer_enter = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_pointer_leave<F>(mut self, handler: F) -> Self
+    where
+        F: for<'a> FnMut(&mut EventCx<'a>, &PointerEvent) + 'static,
+    {
+        self.events.pointer_leave = Some(Box::new(handler));
         self
     }
 
@@ -729,17 +769,18 @@ impl<'a> RegionRebuilder<'a> {
     }
 
     fn sync_events(&mut self, node: NodeId, events: EventHandlers) {
-        if events.click.is_some() {
+        let flags = events.flags();
+        if !flags.is_empty() {
             self.tree.event_handlers.insert(node, events);
             if let Some(node) = self.tree.node_mut(node) {
-                node.event_flags.insert(EventFlags::CLICK);
+                node.event_flags = flags;
                 node.dirty.insert(DirtyFlags::EVENTS);
             }
         } else {
             let removed = self.tree.event_handlers.remove(node).is_some();
             if let Some(node) = self.tree.node_mut(node) {
-                let had_flag = node.event_flags.contains(EventFlags::CLICK);
-                node.event_flags.remove(EventFlags::CLICK);
+                let had_flag = !node.event_flags.is_empty();
+                node.event_flags = EventFlags::empty();
                 if removed || had_flag {
                     node.dirty.insert(DirtyFlags::EVENTS);
                 }
@@ -915,7 +956,8 @@ mod tests {
     use super::*;
     use crate::reactive::{for_each, memo, show, signal, ReactiveRuntime};
     use crate::ui_tree::{
-        BackgroundStyle, Display, FlexDirection, FlexStyle, SizeStyle, SpacingStyle, StyleFlags,
+        BackgroundStyle, Display, EventFlags, FlexDirection, FlexStyle, SizeStyle, SpacingStyle,
+        StyleFlags,
     };
 
     fn component() -> Element {
@@ -1072,6 +1114,41 @@ mod tests {
             .unwrap()
             .style_flags
             .contains(StyleFlags::SIZE | StyleFlags::SPACING | StyleFlags::FLEX));
+    }
+
+    #[test]
+    fn pointer_handlers_set_event_flags() {
+        let mut tree = UiTree::new();
+        let reactive = ReactiveRuntime::new();
+        let mut region = root_region(&tree);
+
+        mount(
+            &mut tree,
+            &reactive,
+            &mut region,
+            button()
+                .on_pointer_down(|_, _| {})
+                .on_pointer_up(|_, _| {})
+                .on_pointer_move(|_, _| {})
+                .on_pointer_enter(|_, _| {})
+                .on_pointer_leave(|_, _| {})
+                .on_click(|_| {}),
+        );
+
+        let node = region.nodes[0];
+        let flags = tree.node(node).unwrap().event_flags;
+        assert!(flags.contains(EventFlags::CLICK));
+        assert!(flags.contains(EventFlags::POINTER_DOWN));
+        assert!(flags.contains(EventFlags::POINTER_UP));
+        assert!(flags.contains(EventFlags::POINTER_MOVE));
+        assert!(flags.contains(EventFlags::POINTER_ENTER));
+        assert!(flags.contains(EventFlags::POINTER_LEAVE));
+        assert!(tree
+            .event_handlers
+            .get(node)
+            .unwrap()
+            .pointer_down
+            .is_some());
     }
 
     #[test]

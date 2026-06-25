@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use slotmap::SlotMap;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton as WinitMouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId as WinitWindowId};
 
@@ -12,7 +12,9 @@ use super::async_runtime::AsyncRuntime;
 use super::{AppCx, Application, WindowCx};
 use crate::element::{mount_element, MountedRegion};
 use crate::reactive::ReactiveRuntime;
-use crate::ui_tree::UiTree;
+use crate::ui_tree::{
+    KeyModifiers, NodeId, Point, PointerButton, PointerButtons, PointerEvent, UiTree,
+};
 use crate::window::{WindowDesc, WindowHandle, WindowId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -312,6 +314,21 @@ impl<A: Application> ApplicationHandler<RuntimeMsg<A>> for AppRuntime<A> {
                 }
                 self.emit_app_event(event_loop, AppEvent::WindowRedrawRequested(window));
             }
+            WindowEvent::CursorMoved { position, .. } => {
+                let point = Point {
+                    x: position.x as f32,
+                    y: position.y as f32,
+                };
+                self.dispatch_window_pointer(window, |runtime| runtime.pointer_moved(point));
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.dispatch_window_pointer(window, |runtime| runtime.mouse_input(state, button));
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                if let Some(runtime) = self.state.windows.get_mut(window) {
+                    runtime.modifiers = key_modifiers(modifiers.state());
+                }
+            }
             _ => {}
         }
     }
@@ -354,19 +371,38 @@ impl<A: Application> AppRuntime<A> {
             event_loop.exit();
         }
     }
+
+    fn dispatch_window_pointer<F>(&mut self, window: WindowId, f: F)
+    where
+        F: FnOnce(&mut WindowRuntime) -> bool,
+    {
+        let Some(runtime) = self.state.windows.get_mut(window) else {
+            return;
+        };
+        let redraw_requested = f(runtime);
+        self.state.flush_reactive(window);
+        if redraw_requested {
+            self.state.request_redraw(window);
+        }
+    }
 }
 
 pub(crate) struct WindowRuntime {
     #[allow(dead_code)]
     pub(crate) id: WindowId,
-    pub(crate) window: Arc<Window>,
     #[allow(dead_code)]
     tree: UiTree,
     root_region: MountedRegion,
     reactive: ReactiveRuntime,
     viewport_width: f32,
     viewport_height: f32,
+    cursor_position: Option<Point>,
+    pointer_buttons: PointerButtons,
+    modifiers: KeyModifiers,
+    hover_path: Vec<NodeId>,
+    pressed_target: Option<NodeId>,
     pub(crate) redraw_requested: bool,
+    pub(crate) window: Arc<Window>,
 }
 
 impl WindowRuntime {
@@ -376,13 +412,18 @@ impl WindowRuntime {
         let size = window.inner_size();
         Self {
             id,
-            window,
             tree,
             root_region,
             reactive: ReactiveRuntime::new(),
             viewport_width: size.width as f32,
             viewport_height: size.height as f32,
+            cursor_position: None,
+            pointer_buttons: PointerButtons::empty(),
+            modifiers: KeyModifiers::empty(),
+            hover_path: Vec::new(),
+            pressed_target: None,
             redraw_requested: false,
+            window,
         }
     }
 
@@ -432,6 +473,7 @@ impl WindowRuntime {
         self.layout()
     }
 
+
     pub(crate) fn dispose(self) {
         self.reactive.dispose_all();
     }
@@ -440,4 +482,213 @@ impl WindowRuntime {
         self.tree
             .compute_layout(self.viewport_width, self.viewport_height)
     }
+
+
+    fn pointer_moved(&mut self, position: Point) -> bool {
+        self.cursor_position = Some(position);
+        let event = self.pointer_event(position, None);
+        let hit = self.tree.hit_test(position);
+        let mut redraw_requested = self.dispatch_hover_changes(&event, &hit.path);
+        if let Some(target) = hit.target {
+            redraw_requested |=
+                self.dispatch_pointer(target, &hit.path, &event, PointerDispatch::Move);
+        }
+        self.hover_path = hit.path;
+        redraw_requested
+    }
+
+    fn mouse_input(&mut self, state: ElementState, button: WinitMouseButton) -> bool {
+        let Some(position) = self.cursor_position else {
+            return false;
+        };
+
+        let button = pointer_button(button);
+        match state {
+            ElementState::Pressed => self.pointer_buttons.insert(buttons_flag(button)),
+            ElementState::Released => self.pointer_buttons.remove(buttons_flag(button)),
+        }
+
+        let event = self.pointer_event(position, Some(button));
+        let hit = self.tree.hit_test(position);
+        match state {
+            ElementState::Pressed => {
+                self.pressed_target = hit.target;
+                hit.target
+                    .map(|target| {
+                        self.dispatch_pointer(target, &hit.path, &event, PointerDispatch::Down)
+                    })
+                    .unwrap_or(false)
+            }
+            ElementState::Released => {
+                let mut redraw_requested = hit
+                    .target
+                    .map(|target| {
+                        self.dispatch_pointer(target, &hit.path, &event, PointerDispatch::Up)
+                    })
+                    .unwrap_or(false);
+                if hit.target.is_some()
+                    && hit.target == self.pressed_target
+                    && matches!(button, PointerButton::Primary)
+                {
+                    redraw_requested |= self.dispatch_click(hit.target.unwrap(), &hit.path);
+                }
+                if matches!(button, PointerButton::Primary) {
+                    self.pressed_target = None;
+                }
+                redraw_requested
+            }
+        }
+    }
+
+    fn pointer_event(&self, position: Point, button: Option<PointerButton>) -> PointerEvent {
+        PointerEvent {
+            pointer_id: 0,
+            position,
+            button,
+            buttons: self.pointer_buttons,
+            modifiers: self.modifiers,
+        }
+    }
+
+    fn dispatch_hover_changes(&mut self, event: &PointerEvent, new_path: &[NodeId]) -> bool {
+        let common_prefix = self
+            .hover_path
+            .iter()
+            .zip(new_path.iter())
+            .take_while(|(old, new)| old == new)
+            .count();
+        let old_tail = self.hover_path[common_prefix..].to_vec();
+        let new_tail = new_path[common_prefix..].to_vec();
+
+        let mut redraw_requested = false;
+        for node in old_tail.iter().rev() {
+            redraw_requested |= self.dispatch_direct_pointer(*node, event, PointerDispatch::Leave);
+        }
+        for node in new_tail {
+            redraw_requested |= self.dispatch_direct_pointer(node, event, PointerDispatch::Enter);
+        }
+        redraw_requested
+    }
+
+    fn dispatch_pointer(
+        &mut self,
+        target: NodeId,
+        path: &[NodeId],
+        event: &PointerEvent,
+        dispatch: PointerDispatch,
+    ) -> bool {
+        let mut redraw_requested = false;
+        for current_target in path.iter().rev().copied() {
+            let Some(handlers) = self.tree.event_handlers.get_mut(current_target) else {
+                continue;
+            };
+            let Some(handler) = pointer_handler(handlers, dispatch) else {
+                continue;
+            };
+            let mut cx = crate::app::EventCx::new(self.id, target, current_target);
+            handler(&mut cx, event);
+            redraw_requested |= cx.redraw_requested;
+            if cx.stopped {
+                break;
+            }
+        }
+        redraw_requested
+    }
+
+    fn dispatch_direct_pointer(
+        &mut self,
+        target: NodeId,
+        event: &PointerEvent,
+        dispatch: PointerDispatch,
+    ) -> bool {
+        let Some(handlers) = self.tree.event_handlers.get_mut(target) else {
+            return false;
+        };
+        let Some(handler) = pointer_handler(handlers, dispatch) else {
+            return false;
+        };
+        let mut cx = crate::app::EventCx::new(self.id, target, target);
+        handler(&mut cx, event);
+        cx.redraw_requested
+    }
+
+    fn dispatch_click(&mut self, target: NodeId, path: &[NodeId]) -> bool {
+        let mut redraw_requested = false;
+        for current_target in path.iter().rev().copied() {
+            let Some(handlers) = self.tree.event_handlers.get_mut(current_target) else {
+                continue;
+            };
+            let Some(handler) = handlers.click.as_mut() else {
+                continue;
+            };
+            let mut cx = crate::app::EventCx::new(self.id, target, current_target);
+            handler(&mut cx);
+            redraw_requested |= cx.redraw_requested;
+            if cx.stopped {
+                break;
+            }
+        }
+        redraw_requested
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PointerDispatch {
+    Down,
+    Up,
+    Move,
+    Enter,
+    Leave,
+}
+
+fn pointer_handler(
+    handlers: &mut crate::ui_tree::EventHandlers,
+    dispatch: PointerDispatch,
+) -> Option<&mut crate::ui_tree::PointerHandler> {
+    match dispatch {
+        PointerDispatch::Down => handlers.pointer_down.as_mut(),
+        PointerDispatch::Up => handlers.pointer_up.as_mut(),
+        PointerDispatch::Move => handlers.pointer_move.as_mut(),
+        PointerDispatch::Enter => handlers.pointer_enter.as_mut(),
+        PointerDispatch::Leave => handlers.pointer_leave.as_mut(),
+    }
+}
+
+fn pointer_button(button: WinitMouseButton) -> PointerButton {
+    match button {
+        WinitMouseButton::Left => PointerButton::Primary,
+        WinitMouseButton::Right => PointerButton::Secondary,
+        WinitMouseButton::Middle => PointerButton::Auxiliary,
+        WinitMouseButton::Back => PointerButton::Back,
+        WinitMouseButton::Forward => PointerButton::Forward,
+        WinitMouseButton::Other(value) => PointerButton::Other(value),
+    }
+}
+
+fn buttons_flag(button: PointerButton) -> PointerButtons {
+    match button {
+        PointerButton::Primary => PointerButtons::PRIMARY,
+        PointerButton::Secondary => PointerButtons::SECONDARY,
+        PointerButton::Auxiliary => PointerButtons::AUXILIARY,
+        PointerButton::Back => PointerButtons::BACK,
+        PointerButton::Forward => PointerButtons::FORWARD,
+        PointerButton::Other(_) => PointerButtons::empty(),
+    }
+}
+
+fn key_modifiers(modifiers: winit::keyboard::ModifiersState) -> KeyModifiers {
+    let mut out = KeyModifiers::empty();
+    if modifiers.shift_key() {
+        out.insert(KeyModifiers::SHIFT);
+    }
+    if modifiers.control_key() {
+        out.insert(KeyModifiers::CTRL);
+    }
+    if modifiers.alt_key() {
+        out.insert(KeyModifiers::ALT);
+    }
+    if modifiers.super_key() {
+        out.insert(KeyModifiers::SUPER);
+    }
+    out
 }

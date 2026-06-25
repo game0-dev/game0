@@ -1,4 +1,5 @@
 mod event;
+mod hit_test;
 mod layout;
 mod node;
 mod state;
@@ -6,7 +7,10 @@ mod style;
 
 use slotmap::{SecondaryMap, SlotMap};
 
-pub use event::{ClickHandler, EventFlags, EventHandlers};
+pub use event::{
+    ClickHandler, EventFlags, EventHandlers, EventPhase, HitTestResult, KeyModifiers, Point,
+    PointerButton, PointerButtons, PointerEvent, PointerHandler,
+};
 pub(crate) use layout::LayoutNodeState;
 pub use node::{DirtyFlags, NodeId, UiNode, UiNodeTag};
 pub use state::{
@@ -622,6 +626,67 @@ mod tests {
         assert!(tree.compute_layout(800.0, 600.0));
 
         assert_eq!(tree.layout_rect(div).unwrap().width, 140.0);
+    }
+
+    #[test]
+    fn hit_test_returns_deepest_node_path() {
+        let mut tree = UiTree::new();
+        let parent = tree.create_node(UiNodeTag::Div);
+        let child = tree.create_node(UiNodeTag::Button);
+        tree.append_child(tree.root(), parent);
+        tree.append_child(parent, child);
+        tree.apply_style(parent, Style::new().w(200.0).h(100.0));
+        tree.apply_style(child, Style::new().w(80.0).h(40.0));
+        tree.compute_layout(800.0, 600.0);
+
+        let hit = tree.hit_test(Point { x: 20.0, y: 20.0 });
+
+        assert_eq!(hit.target, Some(child));
+        assert_eq!(hit.path, vec![tree.root(), parent, child]);
+    }
+
+    #[test]
+    fn hit_test_prefers_later_overlapping_children() {
+        let mut tree = UiTree::new();
+        let parent = tree.create_node(UiNodeTag::Div);
+        let first = tree.create_node(UiNodeTag::Div);
+        let second = tree.create_node(UiNodeTag::Button);
+        tree.append_child(tree.root(), parent);
+        tree.append_child(parent, first);
+        tree.append_child(parent, second);
+        tree.apply_style(parent, Style::new().relative().w(200.0).h(100.0));
+        tree.apply_style(
+            first,
+            Style::new().absolute().left(0.0).top(0.0).w(80.0).h(40.0),
+        );
+        tree.apply_style(
+            second,
+            Style::new().absolute().left(0.0).top(0.0).w(80.0).h(40.0),
+        );
+        tree.compute_layout(800.0, 600.0);
+
+        let hit = tree.hit_test(Point { x: 20.0, y: 20.0 });
+
+        assert_eq!(hit.target, Some(second));
+    }
+
+    #[test]
+    fn hit_test_treats_fragment_as_transparent() {
+        let mut tree = UiTree::new();
+        let parent = tree.create_node(UiNodeTag::Div);
+        let fragment = tree.create_node(UiNodeTag::Fragment);
+        let child = tree.create_node(UiNodeTag::Button);
+        tree.append_child(tree.root(), parent);
+        tree.append_child(parent, fragment);
+        tree.append_child(fragment, child);
+        tree.apply_style(parent, Style::new().w(200.0).h(100.0));
+        tree.apply_style(child, Style::new().w(80.0).h(40.0));
+        tree.compute_layout(800.0, 600.0);
+
+        let hit = tree.hit_test(Point { x: 20.0, y: 20.0 });
+
+        assert_eq!(hit.target, Some(child));
+        assert_eq!(hit.path, vec![tree.root(), parent, child]);
     }
 
     #[test]
