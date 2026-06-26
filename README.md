@@ -56,7 +56,38 @@ cx.spawn_blocking(
 ```bash
 cargo run -p ui0 --example hello_window
 cargo run -p ui0 --example background_task
+cargo run -p ui0 --example render_gallery
+cargo run -p ui0 --example interactive_smoke
 ```
+
+## ui0 Renderer Baseline
+
+`render_gallery` is the fixed manual acceptance sample for the current renderer
+slice:
+
+```bash
+cargo run -p ui0 --example render_gallery
+```
+
+When accepting renderer changes, the sample must visibly show:
+
+- A dark window background with no uninitialized or flickering surface content.
+- Three rows of cards laid out consistently after first paint.
+- Rounded rectangles with visibly different radii: 0, 4, 8, and 16 px.
+- Borders with visibly different widths: 1, 2, and 4 px.
+- Text rendered through the GPU text path at small, medium, and large sizes.
+- Correct HiDPI scaling: text, borders, and radii should remain crisp on scaled displays.
+- Correct window resize handling: resizing the window should not panic, distort the scene, or leave stale frame contents.
+
+The current renderer baseline includes single-pass GPU rect rendering, SDF
+rounded corners, border rendering, glyphon text rendering, rect paint-order
+batching, opacity accumulation, and overflow clip scissor for rect batches.
+Text is prepared once per frame and rendered after rects in this baseline;
+strict interleaved text paint order is future work.
+
+Images and external/game surfaces are represented in `PaintScene` and batch
+compilation, but their GPU draw paths are intentionally not part of this
+baseline yet.
 
 ## Validation
 
