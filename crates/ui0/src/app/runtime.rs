@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use slotmap::SlotMap;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton as WinitMouseButton, WindowEvent};
+use winit::event::{
+    ElementState, MouseButton as WinitMouseButton, MouseScrollDelta, TouchPhase, WindowEvent,
+};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId as WinitWindowId};
 
@@ -12,6 +14,7 @@ use super::async_runtime::AsyncRuntime;
 use super::{AppCx, Application, WindowCx};
 use crate::element::{mount_element, MountedRegion};
 use crate::reactive::ReactiveRuntime;
+use crate::renderer::UiRenderer;
 use crate::ui_tree::{
     KeyModifiers, NodeId, Point, PointerButton, PointerButtons, PointerEvent, UiTree,
 };
@@ -308,21 +311,40 @@ impl<A: Application> ApplicationHandler<RuntimeMsg<A>> for AppRuntime<A> {
                     },
                 );
             }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                if let Some(runtime) = self.state.windows.get_mut(window) {
+                    runtime.set_scale_factor(scale_factor as f32);
+                    self.state.request_redraw(window);
+                }
+            }
             WindowEvent::RedrawRequested => {
                 if let Some(runtime) = self.state.windows.get_mut(window) {
                     runtime.redraw_requested = false;
                 }
                 self.emit_app_event(event_loop, AppEvent::WindowRedrawRequested(window));
+                if let Some(runtime) = self.state.windows.get_mut(window) {
+                    runtime.render();
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let point = Point {
-                    x: position.x as f32,
-                    y: position.y as f32,
-                };
+                let point = self
+                    .state
+                    .windows
+                    .get(window)
+                    .map(|runtime| runtime.physical_point_to_logical(position.x, position.y))
+                    .unwrap_or(Point { x: 0.0, y: 0.0 });
                 self.dispatch_window_pointer(window, |runtime| runtime.pointer_moved(point));
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.dispatch_window_pointer(window, |runtime| runtime.mouse_input(state, button));
+            }
+            WindowEvent::MouseWheel { delta, phase, .. } => {
+                if phase != TouchPhase::Cancelled
+                    && !matches!(delta, MouseScrollDelta::LineDelta(0.0, 0.0))
+                {
+                    // Wheel dispatch is intentionally left for the scroll/focus phase. Keep this
+                    // arm so the runtime has one place for pointer-family events.
+                }
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 if let Some(runtime) = self.state.windows.get_mut(window) {
@@ -394,8 +416,10 @@ pub(crate) struct WindowRuntime {
     tree: UiTree,
     root_region: MountedRegion,
     reactive: ReactiveRuntime,
+    renderer: UiRenderer,
     viewport_width: f32,
     viewport_height: f32,
+    scale_factor: f32,
     cursor_position: Option<Point>,
     pointer_buttons: PointerButtons,
     modifiers: KeyModifiers,
@@ -410,13 +434,17 @@ impl WindowRuntime {
         let tree = UiTree::new();
         let root_region = MountedRegion::new(tree.root());
         let size = window.inner_size();
+        let scale_factor = window.scale_factor() as f32;
+        let renderer = UiRenderer::new(Arc::clone(&window));
         Self {
             id,
             tree,
             root_region,
             reactive: ReactiveRuntime::new(),
-            viewport_width: size.width as f32,
-            viewport_height: size.height as f32,
+            renderer,
+            viewport_width: size.width as f32 / scale_factor,
+            viewport_height: size.height as f32 / scale_factor,
+            scale_factor,
             cursor_position: None,
             pointer_buttons: PointerButtons::empty(),
             modifiers: KeyModifiers::empty(),
@@ -468,11 +496,20 @@ impl WindowRuntime {
     }
 
     pub(crate) fn resize(&mut self, width: u32, height: u32) -> bool {
-        self.viewport_width = width as f32;
-        self.viewport_height = height as f32;
+        self.viewport_width = width as f32 / self.scale_factor;
+        self.viewport_height = height as f32 / self.scale_factor;
+        self.renderer.resize(width, height);
         self.layout()
     }
 
+    pub(crate) fn set_scale_factor(&mut self, scale_factor: f32) {
+        self.scale_factor = scale_factor.max(0.01);
+        self.renderer.set_scale_factor(self.scale_factor);
+        let size = self.window.inner_size();
+        self.viewport_width = size.width as f32 / self.scale_factor;
+        self.viewport_height = size.height as f32 / self.scale_factor;
+        self.layout();
+    }
 
     pub(crate) fn dispose(self) {
         self.reactive.dispose_all();
@@ -483,6 +520,17 @@ impl WindowRuntime {
             .compute_layout(self.viewport_width, self.viewport_height)
     }
 
+    fn render(&mut self) {
+        self.flush_reactive();
+        self.renderer.render(&mut self.tree);
+    }
+
+    fn physical_point_to_logical(&self, x: f64, y: f64) -> Point {
+        Point {
+            x: x as f32 / self.scale_factor,
+            y: y as f32 / self.scale_factor,
+        }
+    }
 
     fn pointer_moved(&mut self, position: Point) -> bool {
         self.cursor_position = Some(position);
