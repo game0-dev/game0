@@ -14,6 +14,7 @@ pub enum UiNodeTag {
     Text,
     Button,
     Img,
+    Surface,
     Fragment,
 }
 
@@ -26,6 +27,7 @@ impl UiNodeTag {
             Self::Text => "text",
             Self::Button => "button",
             Self::Img => "img",
+            Self::Surface => "surface",
             Self::Fragment => "fragment",
         }
     }

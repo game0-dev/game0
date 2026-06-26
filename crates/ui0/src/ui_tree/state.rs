@@ -23,6 +23,28 @@ pub enum ImageSource {
     Path(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExternalSurfaceId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceSource {
+    ExternalTexture(ExternalSurfaceId),
+    RenderTarget(ExternalSurfaceId),
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SurfaceColorSpace {
+    #[default]
+    Srgb,
+    Linear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SurfaceState {
+    pub source: SurfaceSource,
+    pub color_space: SurfaceColorSpace,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct InteractionState {
     pub hovered: bool,

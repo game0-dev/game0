@@ -6,10 +6,14 @@ edition = "2021"
 [dependencies]
 anyhow.workspace = true
 bitflags.workspace = true
+bytemuck.workspace = true
+glyphon = "0.11.0"
+pollster.workspace = true
 slotmap.workspace = true
 smallvec.workspace = true
 taffy = { version = "0.11", default-features = false, features = ["std", "flexbox", "grid", "block_layout", "content_size"] }
 tokio.workspace = true
+wgpu.workspace = true
 winit.workspace = true
 
 [[example]]

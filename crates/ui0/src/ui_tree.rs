@@ -7,6 +7,8 @@ mod style;
 
 use slotmap::{SecondaryMap, SlotMap};
 
+use crate::renderer::cache::RenderNodeState;
+
 pub use event::{
     ClickHandler, EventFlags, EventHandlers, EventPhase, HitTestResult, KeyModifiers, Point,
     PointerButton, PointerButtons, PointerEvent, PointerHandler,
@@ -14,7 +16,8 @@ pub use event::{
 pub(crate) use layout::LayoutNodeState;
 pub use node::{DirtyFlags, NodeId, UiNode, UiNodeTag};
 pub use state::{
-    ImageSource, ImageState, InteractionState, LayoutRect, ScrollState, TextContent, TextInputState,
+    ExternalSurfaceId, ImageSource, ImageState, InteractionState, LayoutRect, ScrollState,
+    SurfaceColorSpace, SurfaceSource, SurfaceState, TextContent, TextInputState,
 };
 pub use style::{
     AlignItems, BackgroundStyle, BorderStyle, Color, Corners, Display, Edges, EffectStyle,
@@ -38,12 +41,14 @@ pub struct UiTree {
 
     pub(crate) text_content: SecondaryMap<NodeId, TextContent>,
     pub(crate) image_states: SecondaryMap<NodeId, ImageState>,
+    pub(crate) surface_states: SecondaryMap<NodeId, SurfaceState>,
     pub(crate) event_handlers: SecondaryMap<NodeId, EventHandlers>,
     pub(crate) interaction_states: SecondaryMap<NodeId, InteractionState>,
     pub(crate) scroll_states: SecondaryMap<NodeId, ScrollState>,
     pub(crate) text_input_states: SecondaryMap<NodeId, TextInputState>,
 
     pub(crate) layout_states: SecondaryMap<NodeId, LayoutNodeState>,
+    pub(crate) render_states: SecondaryMap<NodeId, RenderNodeState>,
 }
 
 impl UiTree {
@@ -64,11 +69,13 @@ impl UiTree {
             effect_styles: SecondaryMap::new(),
             text_content: SecondaryMap::new(),
             image_states: SecondaryMap::new(),
+            surface_states: SecondaryMap::new(),
             event_handlers: SecondaryMap::new(),
             interaction_states: SecondaryMap::new(),
             scroll_states: SecondaryMap::new(),
             text_input_states: SecondaryMap::new(),
             layout_states: SecondaryMap::new(),
+            render_states: SecondaryMap::new(),
         };
         tree.initialize_layout_node(root);
         tree
@@ -186,6 +193,19 @@ impl UiTree {
 
     pub fn text(&self, node: NodeId) -> Option<&str> {
         self.text_content.get(node).map(|text| text.value.as_str())
+    }
+
+    pub fn set_surface(&mut self, node: NodeId, state: SurfaceState) -> bool {
+        if self.surface_states.get(node) == Some(&state) {
+            return false;
+        }
+        self.surface_states.insert(node, state);
+        self.mark_dirty(node, DirtyFlags::PAINT);
+        true
+    }
+
+    pub fn surface(&self, node: NodeId) -> Option<SurfaceState> {
+        self.surface_states.get(node).copied()
     }
 
     pub fn apply_style(&mut self, node: NodeId, style: Style) -> bool {
@@ -323,6 +343,12 @@ impl UiTree {
         }
     }
 
+    pub(crate) fn clear_dirty_flags(&mut self, flags: DirtyFlags) {
+        for (_, node) in self.nodes.iter_mut() {
+            node.dirty.remove(flags);
+        }
+    }
+
     pub fn debug_dump(&self) -> String {
         let mut out = String::new();
         self.debug_node(self.root, 0, &mut out);
@@ -356,11 +382,13 @@ impl UiTree {
         self.effect_styles.remove(node);
         self.text_content.remove(node);
         self.image_states.remove(node);
+        self.surface_states.remove(node);
         self.event_handlers.remove(node);
         self.interaction_states.remove(node);
         self.scroll_states.remove(node);
         self.text_input_states.remove(node);
         self.layout_states.remove(node);
+        self.render_states.remove(node);
     }
 
     fn debug_node(&self, node: NodeId, depth: usize, out: &mut String) {

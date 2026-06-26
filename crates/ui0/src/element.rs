@@ -6,7 +6,8 @@ use crate::reactive::{
 };
 use crate::ui_tree::{
     AlignItems, Color, DirtyFlags, EventFlags, EventHandlers, ImageSource, ImageState,
-    JustifyContent, Length, NodeId, Overflow, PointerEvent, Style, UiNodeTag, UiTree,
+    JustifyContent, Length, NodeId, Overflow, PointerEvent, Style, SurfaceColorSpace,
+    SurfaceSource, SurfaceState, UiNodeTag, UiTree,
 };
 
 pub enum Reactive<T> {
@@ -138,6 +139,7 @@ pub struct Element {
     pub(crate) style: Style,
     pub(crate) text: Option<Reactive<String>>,
     pub(crate) image: Option<ImageSource>,
+    pub(crate) surface: Option<SurfaceState>,
     pub(crate) events: EventHandlers,
     pub(crate) bindings: Vec<ElementBinding>,
     pub(crate) children: Vec<ElementChild>,
@@ -161,6 +163,7 @@ impl Element {
             style: Style::new(),
             text: None,
             image: None,
+            surface: None,
             events: EventHandlers::default(),
             bindings: Vec::new(),
             children: Vec::new(),
@@ -248,6 +251,21 @@ impl Element {
         F: for<'a> FnMut(&mut EventCx<'a>, &PointerEvent) + 'static,
     {
         self.events.pointer_leave = Some(Box::new(handler));
+        self
+    }
+
+    pub fn surface_source(mut self, source: SurfaceSource) -> Self {
+        self.surface = Some(SurfaceState {
+            source,
+            color_space: SurfaceColorSpace::Srgb,
+        });
+        self
+    }
+
+    pub fn surface_color_space(mut self, color_space: SurfaceColorSpace) -> Self {
+        if let Some(surface) = self.surface.as_mut() {
+            surface.color_space = color_space;
+        }
         self
     }
 
@@ -579,6 +597,10 @@ pub fn img(source: ImageSource) -> Element {
     element
 }
 
+pub fn surface_view(source: SurfaceSource) -> Element {
+    Element::new(UiNodeTag::Surface).surface_source(source)
+}
+
 pub fn text<V>(value: V) -> Element
 where
     V: IntoTextValue,
@@ -695,6 +717,7 @@ impl<'a> RegionRebuilder<'a> {
             style,
             text,
             image,
+            surface,
             events,
             bindings,
             children,
@@ -713,6 +736,7 @@ impl<'a> RegionRebuilder<'a> {
 
         self.sync_text(node, text);
         self.sync_image(node, image);
+        self.sync_surface(node, surface);
         self.sync_events(node, events);
         self.tree.apply_style(node, style);
         self.apply_bindings(node, bindings);
@@ -747,6 +771,12 @@ impl<'a> RegionRebuilder<'a> {
                     );
                 }
             }
+        }
+    }
+
+    fn sync_surface(&mut self, node: NodeId, surface: Option<SurfaceState>) {
+        if let Some(surface) = surface {
+            self.tree.set_surface(node, surface);
         }
     }
 
